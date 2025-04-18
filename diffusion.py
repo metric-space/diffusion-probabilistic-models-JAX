@@ -3,6 +3,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optax
+import click
+import os
 
 # jax typing?
 
@@ -157,7 +159,35 @@ def compute_loss(model, x, y):
     return -multivariate_normal_diag(y, x + mu, sigma, log=True).mean()
 
 
-if __name__ == "__main__":
+# NOTE: this will save to a directory in the root directory, not a file in the root directory
+def save_model(filename, model):
+
+    directory = "./models"
+
+    os.makedirs(directory, exist_ok=True)
+    with open(os.path.join(directory, filename), "wb") as f:
+        eqx.tree_serialise_leaves(f, model)
+
+def load_model(filename, key):
+    with open(filename, "rb") as f:
+        model = RBFNetwork(key=key)
+        return eqx.tree_deserialise_leaves(f, model)
+
+
+
+@click.group()
+def cli():
+    """CLI for training or running inference."""
+    pass
+
+@cli.command()
+@click.option("--epochs", default=10000, help="Number of training epochs.")
+@click.option("--lr", default=0.007, help="Learning rate.")
+@click.option("--filename",default="spiral.epx",help="Filename to save model checkpoint")
+def train(epochs, lr, filename):
+    """Run training."""
+    click.echo(f"Training for {epochs} epochs with lr={lr}")
+
     key = jax.random.PRNGKey(0)
     data = swissroll(1000, key)
 
@@ -193,7 +223,7 @@ if __name__ == "__main__":
 
     opt_state = optimizer.init(model)
 
-    for i in range(10000):
+    for i in range(epochs):
         y, x = data[:, :-1, :], data[:, 1:, :]
 
         loss, grads = compute_loss(model, x, y)
@@ -202,6 +232,22 @@ if __name__ == "__main__":
 
         print(loss.item())
 
+    save_model(filename, model)
+
+
+@cli.command()
+@click.option("--checkpoint", required=True, help="Path to model checkpoint.")
+def inference(checkpoint):
+    """Run inference."""
+
+    key = jax.random.PRNGKey(0)
+
+    key_model, key_sample = jax.random.split(key)
+
+    model = load_model(checkpoint, key)
+
+    click.echo(f"Running inference with checkpoint={checkpoint}")
+     
     sampled = reverse_sample(model, key_sample)
 
     print("plotting")
@@ -213,4 +259,19 @@ if __name__ == "__main__":
             index = i * 8 + j
             print(index)
             ax[i, j].scatter(sampled[index][:, 0], sampled[index][:, 1])
+
     plt.savefig("final_with_trajectories.png")
+
+    fix, ax = plt.subplots(figsize=(15,15))
+    ax.scatter(sampled[0][:,0], sampled[0][:,1])
+    plt.savefig("denoised.png")
+
+
+
+if __name__ == "__main__":
+    cli()
+    
+
+    
+
+
