@@ -3,6 +3,17 @@
 ![Alt Text](./resources/scatter.gif)
 
 
+## Commands
+
+```bash
+
+time python diffusion.py train --epochs 10000
+
+time python diffusion.py inference --checkpoint ./models/spiral.epx
+
+```
+
+
 # Credits
 
 I've been trying to recreate the spiral dataset diffusion using the original paper []()
