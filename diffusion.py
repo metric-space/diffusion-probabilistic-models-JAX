@@ -6,6 +6,9 @@ import optax
 import click
 import os
 
+import matplotlib.animation as animation
+
+
 # jax typing?
 
 
@@ -149,7 +152,7 @@ def reverse_sample(rbf_network_model, key, samples=1000, timesteps=39):
 
     print([x.shape for x in steps])
 
-    return jnp.stack(steps[::-1])  # T, B, 2 perhaps we should change this?
+    return jnp.stack(steps)  # T, B, 2 perhaps we should change this?
 
 
 @eqx.filter_value_and_grad
@@ -252,19 +255,51 @@ def inference(checkpoint):
 
     print("plotting")
 
-    fig, ax = plt.subplots(nrows=5, ncols=8, figsize=(15, 12))
+    #fig, ax = plt.subplots(nrows=5, ncols=8, figsize=(15, 12))
 
-    for i in range(5):
-        for j in range(8):
-            index = i * 8 + j
-            print(index)
-            ax[i, j].scatter(sampled[index][:, 0], sampled[index][:, 1])
+    #for i in range(5):
+    #    for j in range(8):
+    #        index = i * 8 + j
+    #        print(index)
+    #        ax[i, j].scatter(sampled[index][:, 0], sampled[index][:, 1])
 
-    plt.savefig("final_with_trajectories.png")
+    #plt.savefig("final_with_trajectories.png")
 
-    fix, ax = plt.subplots(figsize=(15,15))
-    ax.scatter(sampled[0][:,0], sampled[0][:,1])
-    plt.savefig("denoised.png")
+    #fix, ax = plt.subplots(figsize=(15,15))
+    #ax.scatter(sampled[-1][:,0], sampled[-1][:,1])
+    #plt.savefig("denoised.png")
+
+
+    fig, ax = plt.subplots(figsize=(15,15))
+    ax.set_xlim([-2, 2])
+    ax.set_ylim([-2, 2])
+
+    print(sampled[0][:,0][0], sampled[0][:,1][1])
+
+    scat = ax.scatter(sampled[0][:,0], sampled[0][:,1])
+
+    x = jnp.linspace(0.2, 1, 40)
+    print(x)
+
+    def animate(i):
+         if i > 0 :
+            data = [(x[0], x[1]) for x in sampled[i]]
+            print(data)
+            scat.set_offsets(data)
+         else:
+             pass
+            
+         print(f"{i}th pass is somewhat successful")
+         return scat,
+
+    ani = animation.FuncAnimation(fig, animate, repeat=True, frames=40 - 1, interval=50, repeat_delay=2500)
+    
+    # To save the animation using Pillow as a gif
+    writer = animation.PillowWriter(fps=7,
+                                    metadata=dict(artist='metric-space'),
+                                    bitrate=1800)
+    ani.save('scatter.gif', writer=writer)
+    #plt.show()
 
 
 
