@@ -41,7 +41,7 @@ def forward_process_single_step(acc, std):
 
     noise = jax.random.normal(key_noise, data.shape) * std
 
-    noised_data = (1 - std ** (0.5)) * data + noise
+    noised_data = ((1 - std) ** 0.5) * data + noise
 
     return (key_, noised_data), noised_data
 
