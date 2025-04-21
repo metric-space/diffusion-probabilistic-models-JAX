@@ -8,6 +8,7 @@ import os
 import torchvision
 import torch
 import torchvision.transforms as transforms
+from dataclasses import dataclass
 
 
 # delete after
@@ -28,55 +29,48 @@ class SingleScaleConvolution(eqx.Module):
 
     def __init__(self, key, num_channels, num_filters, spatial_width, filter_size):
         self.spatial_width = spatial_width
-        self.conv = eqx.nn.Conv(key=key, num_spatial_dims=2,in_channels=num_channels, out_channels=num_filters,  kernel_size=filter_size, stride=1, padding=1)
-
-    # TODO: replace this with a library function, possibly from equinox
-    # USELESS for now
-    def downsample(self,x):
-        # assuming shape 
-        B,C,W,H = x.shape
-        x = x.reshape((B, C, W // 2, 2, H // 2, 2))
-        x = x.mean(axis=5)
-        x = x.mean(axis=3)
-        return x
-
-    # TODO: replace this with something more easier to figure out
-    # USELESS FOR NOW
-    def upsample(self, x):
-        C,W,H = x.shape
-        x = x.reshape(( C, W, 1, H, 1))
-        x = jnp.concat([x,x], axis=4)
-        x = jnp.concat([x,x], axis=2)
-        x = x.reshape((C, self.spatial_width, self.spatial_width))
-        return x
-
+        self.conv = eqx.nn.Conv(
+            key=key,
+            num_spatial_dims=2,
+            in_channels=num_channels,
+            out_channels=num_filters,
+            kernel_size=filter_size,
+            stride=1,
+            padding=1,
+        )
 
     # NOTE: dummy key is required to be used as a part of equinox.nn.Sequential
-    def __call__(self,x, key=None):
+    def __call__(self, x, key=None):
         # pad input for 'full effect', remember input has no batch axis yet
-        x = jax.numpy.pad(x,((0,0), (1,1), (1,1)))
+        x = jax.numpy.pad(x, ((0, 0), (1, 1), (1, 1)))
         x = self.conv(x)
-        x = x[:,1:-1,1:-1]
+        x = x[:, 1:-1, 1:-1]
         x = LeakyRelu(x)
 
         return x
 
 
-# TODO: change filter to kernel, it's 2025 not 2015 
+# TODO: change filter to kernel, it's 2025 not 2015
 class MultiLayerConvolution(eqx.Module):
-    layers: list # or sequential?
+    layers: list  # or sequential?
 
-    def __init__(self, key, n_layers, n_hidden, spatial_width, n_colours, filter_size=3):
+    def __init__(
+        self, key, n_layers, n_hidden, spatial_width, n_colours, filter_size=3
+    ):
 
         self.layers = []
         # split keys here
 
-        keys_ = jax.random.split(key,n_layers+1)
+        keys_ = jax.random.split(key, n_layers + 1)
 
         in_channels = n_colours
 
         for i in range(n_layers):
-            self.layers.append(SingleScaleConvolution(keys_[i+1], in_channels, n_hidden, spatial_width, filter_size))
+            self.layers.append(
+                SingleScaleConvolution(
+                    keys_[i + 1], in_channels, n_hidden, spatial_width, filter_size
+                )
+            )
             in_channels = n_hidden
 
         self.layers = eqx.nn.Sequential(self.layers)
@@ -85,11 +79,10 @@ class MultiLayerConvolution(eqx.Module):
         return self.layers(x)
 
 
-
 class MLPConvDense(eqx.Module):
     mlp_dense_upper: eqx.nn.MLP
     mlp_dense_lower: eqx.nn.MLP
-    conv: MultiLayerConvolution 
+    conv: MultiLayerConvolution
 
     spatial_width: int
     colours: int
@@ -97,39 +90,71 @@ class MLPConvDense(eqx.Module):
     n_hidden_conv: int
     n_temporal_basis: int
 
-    def __init__(self, key, n_layers_conv, n_layers_dense_lower, n_layers_dense_upper, n_hidden_conv, n_hidden_dense_lower, n_hidden_dense_lower_output, n_hidden_dense_upper,  spatial_width, n_colours, n_temporal_basis):
+    def __init__(
+        self,
+        key,
+        n_layers_conv,
+        n_layers_dense_lower,
+        n_layers_dense_upper,
+        n_hidden_conv,
+        n_hidden_dense_lower,
+        n_hidden_dense_lower_output,
+        n_hidden_dense_upper,
+        spatial_width,
+        n_colours,
+        n_temporal_basis,
+    ):
 
-        _, key_conv, key_lower, key_upper = jax.random.split(key,4)
+        _, key_conv, key_lower, key_upper = jax.random.split(key, 4)
 
-        self.conv = MultiLayerConvolution(key_conv, n_layers_conv, n_hidden_conv, spatial_width, n_colours)
+        self.conv = MultiLayerConvolution(
+            key_conv, n_layers_conv, n_hidden_conv, spatial_width, n_colours
+        )
 
-        input_ = n_colours*spatial_width**2
-        output_ = n_hidden_dense_lower_output*spatial_width**2
-        self.mlp_dense_lower = eqx.nn.MLP(key=key_lower, activation=LeakyRelu, depth=n_layers_dense_lower, in_size=input_, out_size=output_, width_size=n_hidden_dense_lower)
+        input_ = n_colours * spatial_width**2
+        output_ = n_hidden_dense_lower_output * spatial_width**2
+        self.mlp_dense_lower = eqx.nn.MLP(
+            key=key_lower,
+            activation=LeakyRelu,
+            depth=n_layers_dense_lower,
+            in_size=input_,
+            out_size=output_,
+            width_size=n_hidden_dense_lower,
+        )
 
-
-        input_ = n_hidden_conv + 3 #n_hidden_dense_lower_output
-        output_ =  n_colours*n_temporal_basis*2
-        self.mlp_dense_upper = eqx.nn.Conv(key=key_upper, num_spatial_dims=2,in_channels=input_, out_channels=output_,  kernel_size=1)
+        input_ = n_hidden_conv + 3  # n_hidden_dense_lower_output
+        output_ = n_colours * n_temporal_basis * 2
+        self.mlp_dense_upper = eqx.nn.Conv(
+            key=key_upper,
+            num_spatial_dims=2,
+            in_channels=input_,
+            out_channels=output_,
+            kernel_size=1,
+        )
 
         self.spatial_width = spatial_width
         self.colours = n_colours
-        self.n_hidden_conv =  n_hidden_conv
+        self.n_hidden_conv = n_hidden_conv
         self.n_hidden_dense_lower_output = n_hidden_dense_lower_output
         self.n_temporal_basis = n_temporal_basis
-
 
     def __call__(self, x):
 
         Y = self.conv(x)
-        Y = jnp.permute_dims(Y, (1,2,0))
+        Y = jnp.permute_dims(Y, (1, 2, 0))
 
-        X = x.reshape((self.colours*self.spatial_width**2))
-        Y_dense = self.mlp_dense_lower(X) 
+        X = x.reshape((self.colours * self.spatial_width**2))
+        Y_dense = self.mlp_dense_lower(X)
         print(f"Y shape is {Y.shape}")
         Y_dense = X.reshape((self.spatial_width, self.spatial_width, 3))
 
-        Z = jnp.concat([Y /jnp.sqrt(self.n_hidden_conv) , Y_dense / jnp.sqrt(self.n_hidden_dense_lower_output)], axis=-1)
+        Z = jnp.concat(
+            [
+                Y / jnp.sqrt(self.n_hidden_conv),
+                Y_dense / jnp.sqrt(self.n_hidden_dense_lower_output),
+            ],
+            axis=-1,
+        )
 
         Z = jnp.permute_dims(Z, (2, 0, 1))
 
@@ -139,19 +164,15 @@ class MLPConvDense(eqx.Module):
 
         print(f"Z shape is {Z.shape}")
 
-        Z = jnp.permute_dims(Z, (1,2,0))
+        Z = jnp.permute_dims(Z, (1, 2, 0))
 
         return Z
-
 
 
 # ----------------------------------------------------------------------
 
 train_dataset = torchvision.datasets.CIFAR10(
-    "CIFAR10",
-    train=True,
-    download=True,
-    transform=transforms.ToTensor()
+    "CIFAR10", train=True, download=True, transform=transforms.ToTensor()
 )
 
 trainloader = torch.utils.data.DataLoader(
@@ -163,7 +184,7 @@ count = 2
 
 import numpy as np
 
-#for i in trainloader:
+# for i in trainloader:
 #    if count > 0:
 #        print(type(i))
 #        print(len(i))
@@ -176,13 +197,13 @@ arr = train_dataset[0][0].numpy()
 
 print(arr.shape)
 
-#arr = arr.reshape((C, W//2 , 2 , H // 2 , 2))
-#arr = arr.mean(dim=4)
-#arr = arr.mean(dim=2)
+# arr = arr.reshape((C, W//2 , 2 , H // 2 , 2))
+# arr = arr.mean(dim=4)
+# arr = arr.mean(dim=2)
 
-#print(arr.shape)
+# print(arr.shape)
 
-#arr_uint8 = (arr * 255).astype(np.uint8)
+# arr_uint8 = (arr * 255).astype(np.uint8)
 
 # Create and save image
 # img = Image.fromarray(arr_uint8)
@@ -191,12 +212,97 @@ print(arr.shape)
 
 # TODO: make this a config
 
+# TODO: change name
+#class Diffusion(eqx.Module):
+#    temporal_basis: None
+#
+#
+#    def __init__(self, key):
+#        pass
+#
+#    def get_t_weights(self, t):
+#        # output: [trajectory_length, 1]
+#        t_compare = jnp.arange(self.trajectory_length)
+#        diff = jnp.abs(t_compare - t)
+#        weights = jnp.maximum(0.0, 1.0 - diff)
+#        return weights[:, None]
+#
+#    def generate_temporal_basis(self): #, trajectory_length, n_basis):
+#
+#        temporal_basis = jnp.zeros((self.trajectory_length, self.n_basis))
+#
+#        xx = jnp.linspace(-1,1,self.trajectory_length)
+#
+#        x_centers = jnp.linspace(-1,1, self.n_basis)
+#
+#        width = (x_centers[1] - x_centers[0])/2.
+#
+#        for i in range(self.n_basis):
+#            temporal_basis[:,i] = jnp.exp(-(xx - x_centers[i])**2 / (2*width**2))
+#        
+#        temporal_basis /= jnp.sum(temporal_basis, axis=1)
+#        temporal_basis = temporal_basis.T
+#
+#        return temporal_basis # [self.n_basis, trajectory_length]
+#
 
 
-if __name__ == '__main__':
+def get_t_weights(trajectory_length, t):
+    # output: [trajectory_length, 1]
+    t_compare = jnp.arange(trajectory_length)
+    diff = jnp.abs(t_compare - t)
+    weights = jnp.maximum(0.0, 1.0 - diff)
+    return weights[:, None]
+
+
+def generate_temporal_basis(trajectory_length, n_basis):
+
+    temporal_basis = jnp.zeros((trajectory_length, n_basis))
+
+    xx = jnp.linspace(-1,1,trajectory_length) # [trajectory_length, :]
+
+    x_centers = jnp.linspace(-1,1,n_basis)
+
+    width = (x_centers[1] - x_centers[0])/2.
+
+    temporal_basis = jnp.exp(-(xx[:,None] - x_centers[None,:])**2 / (2*width**2))
+
+    print(f"temporal_basis shape is {temporal_basis.shape}")
+    
+    temporal_basis /= jnp.sum(temporal_basis, axis=1).reshape((-1,1))
+    temporal_basis = temporal_basis.T
+
+    print(f"temporal_basis shape is {temporal_basis.shape}")
+
+    return temporal_basis # [self.n_basis, trajectory_length]
+
+
+def generate_temporal_readout(trajectory_length, Z, t):
+
+    Z = Z.reshape((32, 32, 3, 2, 10))
+
+    temp_basis =  generate_temporal_basis(trajectory_length, 10)
+
+    t_weights = get_t_weights(trajectory_length, t)
+
+    coeff_weights = temp_basis @ t_weights # [10,1]
+
+    concat_coeffs = Z @ coeff_weights
+
+    print(f"concat_coeffs weights are: {concat_coeffs.shape}")
+
+    mu_coeff = jnp.permute_dims(concat_coeffs[:,:,:,0], (2,0,1,3)).squeeze(-1)
+
+    sigma_coeff = jnp.permute_dims(concat_coeffs[:,:,:,1], (2,0,1,3)).squeeze(-1)
+
+    return mu_coeff, sigma_coeff
+
+
+
+if __name__ == "__main__":
     key = jax.random.PRNGKey(0)
 
-    k, main_key = jax.random.split(key,2)
+    k, main_key = jax.random.split(key, 2)
 
     n_hidden_dense_lower_output = 5
     n_hidden_dense_lower = 1000
@@ -208,14 +314,30 @@ if __name__ == '__main__':
     spatial_width = 32
     n_temporal_basis = 10
 
-    #c = SingleScaleConvolution(main_key, 3, 100, 32, 3)
+    # c = SingleScaleConvolution(main_key, 3, 100, 32, 3)
 
     # c = MultiLayerConvolution(main_key, 00, 32, 3)
 
-    #k = c(arr)
+    # k = c(arr)
 
-    mlpconv = MLPConvDense(main_key, n_temporal_basis=n_temporal_basis, spatial_width=spatial_width, n_hidden_dense_lower_output=n_hidden_dense_lower_output, n_hidden_dense_lower=n_hidden_dense_lower, n_hidden_dense_upper=n_hidden_dense_upper, n_layers_conv=n_layers_conv, n_layers_dense_lower=n_layers_dense_lower, n_layers_dense_upper=n_layers_dense_upper, n_colours=3, n_hidden_conv=100)
+    mlpconv = MLPConvDense(
+        main_key,
+        n_temporal_basis=n_temporal_basis,
+        spatial_width=spatial_width,
+        n_hidden_dense_lower_output=n_hidden_dense_lower_output,
+        n_hidden_dense_lower=n_hidden_dense_lower,
+        n_hidden_dense_upper=n_hidden_dense_upper,
+        n_layers_conv=n_layers_conv,
+        n_layers_dense_lower=n_layers_dense_lower,
+        n_layers_dense_upper=n_layers_dense_upper,
+        n_colours=3,
+        n_hidden_conv=100,
+    )
 
     image_ = mlpconv(arr)
 
     print("k shape is ", image_.shape)
+
+    mu,sigma = generate_temporal_readout(100, image_, n_temporal_basis)
+
+    print(f"mu shape is {mu.shape} and sigma shape is {sigma.shape}")
