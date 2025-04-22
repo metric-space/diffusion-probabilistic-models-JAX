@@ -217,9 +217,14 @@ print(arr.shape)
 class Diffusion(eqx.Module):
     temporal_basis: jax.Array
     beta_perturb_coefficients: jax.Array
+    beta_arr: jax.Array
     min_beta: jax.Array
+    mlpconv: eqx.Module
 
     trajectory_length: int = eqx.static_field()
+    n_temporal_basis: int = eqx.static_field()
+    spatial_width: int = eqx.static_field()
+    n_colours: int = eqx.static_field()
 
     def __init__(
         self,
@@ -229,17 +234,46 @@ class Diffusion(eqx.Module):
         trajectory_length=1000,
         n_temporal_basis=10,
         n_hidden_dense_lower=500,
+        n_hidden_dense_lower_output=2,
+        n_hidden_dense_upper=20,
+        n_hidden_conv=20,
+        n_layers_conv=4,
+        n_layers_dense_lower=4,
+        n_layers_dense_upper=2,
         step1_beta=0.001,
     ):
-        self.trajectory_length = 1000
+
+        key_beta, key_mlpconv = jax.random.split(key,2)
+
+
+        self.trajectory_length = trajectory_length
+        self.n_temporal_basis = n_temporal_basis
+        self.spatial_width = spatial_width
+        self.n_colours = n_colours
 
         self.temporal_basis = self.generate_temporal_basis(
             trajectory_length, n_temporal_basis
         )
         self.min_beta = self.generate_min_beta(trajectory_length, step1_beta)
+
+        self.beta_perturb_coefficients = jax.random.normal(key_beta, (n_temporal_basis,))
         self.beta_arr = self.generate_beta_arr()
 
-        self.beta_perturb_coefficients = jax.random.Normal(key, (n_temporal_basis,))
+        
+
+        self.mlpconv =  MLPConvDense(
+                key_mlpconv,
+                n_temporal_basis=n_temporal_basis,
+                spatial_width=spatial_width,
+                n_hidden_dense_lower_output=n_hidden_dense_lower_output,
+                n_hidden_dense_lower=n_hidden_dense_lower,
+                n_hidden_dense_upper=n_hidden_dense_upper,
+                n_layers_conv=n_layers_conv,
+                n_layers_dense_lower=n_layers_dense_lower,
+                n_layers_dense_upper=n_layers_dense_upper,
+                n_colours=n_colours,
+                n_hidden_conv=n_hidden_conv
+        )
 
     def get_t_weights(self, t):
         # output: [trajectory_length, 1]
@@ -271,15 +305,13 @@ class Diffusion(eqx.Module):
 
         return temporal_basis  # [self.n_basis, trajectory_length]
 
-    def generate_temporal_readout(self, trajectory_length, Z, t):
+    def temporal_readout(self, Z, t):
 
-        Z = Z.reshape((32, 32, 3, 2, 10))
+        Z = Z.reshape((self.spatial_width, self.spatial_width, self.n_colours, 2, self.n_temporal_basis))
 
-        temp_basis = generate_temporal_basis(trajectory_length, 10)
+        t_weights = self.get_t_weights(t)
 
-        t_weights = get_t_weights(trajectory_length, t)
-
-        coeff_weights = temp_basis @ t_weights  # [10,1]
+        coeff_weights = self.temporal_basis @ t_weights  # [10,1]
 
         concat_coeffs = Z @ coeff_weights
 
@@ -296,7 +328,7 @@ class Diffusion(eqx.Module):
     def generate_min_beta(self, trajectory_length, step1_beta):
         min_beta_val = 1e-6
         min_beta_values = jnp.ones((trajectory_length,)) * min_beta_val
-        min_beta_values += jnp.eye(4)[0, :] * step1_beta
+        min_beta_values += jnp.eye(trajectory_length)[0, :] * step1_beta
 
         return min_beta_values
 
@@ -304,26 +336,30 @@ class Diffusion(eqx.Module):
 
         beta_perturb = self.temporal_basis.T @ self.beta_perturb_coefficients
 
-        beta_baseline = 1.0 / jnp.linspace(trajectory_length, 2.0, trajectory_length)
+        beta_baseline = 1.0 / jnp.linspace(self.trajectory_length, 2.0, self.trajectory_length)
         beta_baseline_offset = jax.scipy.special.logit(beta_baseline)
 
         beta_arr = jax.nn.sigmoid(beta_perturb + beta_baseline)
         beta_arr = self.min_beta + beta_arr * (1 - self.min_beta - 1e-5)
 
-        return beta_arr.reshape((trajectory_length, 1))
+        return beta_arr.reshape((self.trajectory_length, 1))
 
     def get_beta_forward(self, t):
 
-        return self.get_t_weights(t) @ self.beta_arr
+        return self.get_t_weights(t).T @ self.beta_arr
 
     # TODO: batch yet to come
-    def generate_forward_diffusion_sample(self, key, image):
+    def forward_diffusion(self, key, t,  image):
 
         # Remember to split key
-        t = jax.random.choice(key, jnp.arange(1, self.trajectory_length))
+        choice_key, normal_key, uniform_key = jax.random.split(key,3) 
+
+
+        #t = jax.random.choice(choice_key, jnp.arange(1, self.trajectory_length))
         t_weights = self.get_t_weights(t)
 
-        N = jax.random.Normal(key, image.shape)
+        N = jax.random.normal(normal_key, image.shape)
+        U = jax.random.uniform(uniform_key, image.shape)
 
         beta_forward = self.get_beta_forward(t)
         alpha_forward = 1 - beta_forward
@@ -332,9 +368,9 @@ class Diffusion(eqx.Module):
         alpha_cum_forward_arr = jnp.cumprod(alpha_arr)
         alpha_cum_forward = t_weights.T @ alpha_cum_forward_arr
 
-        image_uniformnoise = image + jax.random.Uniform(key, image.shape)
+        image_uniform_noise = image + U 
         # NOTE: the shape
-        image_noise = image_uniformnoise * jnp.power(
+        image_noise = image_uniform_noise * jnp.power(
             alpha_cum_forward, 0.5
         ) + N * jnp.power(1 - alpha_cum_forward, 0.5)
 
@@ -347,21 +383,21 @@ class Diffusion(eqx.Module):
         mu = (
             (image_uniform_noise * mu1_sc1 / cov1) + (image_noise * mu2_sc1 / cov2)
         ) / lam
-        sigma = jnp.power(lam, -0.5).reshape((1, 1, 1, 1))  # huh?
+        sigma = jnp.power(lam, -0.5).reshape((1, 1, 1))  # huh?
 
-        return image_noise, t, mu, sigma
+        return image_noise, mu, sigma
 
     # TODO: name this better
-    def get_mu_sigma(self, noised_image, t):
+    def reverse_diffusion(self, t, noised_image):
 
-        Z = self.mlp(noised_image)
+        Z = self.mlpconv(noised_image)
         mu_coeff, beta_coeff = self.temporal_readout(Z, t)
 
         # reverse variance is a perturbation around forward variance  (why?)
         beta_forward = self.get_beta_forward(t)
 
         beta_coeff_scaled = beta_coeff / jnp.power(self.trajectory_length, 0.5)
-        beta_reverse = jnp.sigmoid(beta_coeff_scaled + jax.scipy.logit(beta_forward))
+        beta_reverse = jax.nn.sigmoid(beta_coeff_scaled + jax.scipy.special.logit(beta_forward))
 
         sigma = jnp.power(beta_reverse, 0.5)
 
@@ -384,7 +420,7 @@ def neg_loglikelihood(
 
     # Why the convoluted route? Because the normal route is numerically unstable
     alpha_arr = 1.0 - covariance_schedule
-    cumulative_covariance(1.0 - jnp.exp(jnp.log(alpha_arr).sum()))
+    cumulative_covariance = (1.0 - jnp.exp(jnp.log(alpha_arr).sum()))
 
     KL = (
         jnp.log(sigma)
@@ -399,7 +435,7 @@ def neg_loglikelihood(
     H_endpoint = COMMON + 0.5 * jnp.log(cumulative_covariance)
     H_prior = COMMON
 
-    negl_bound = KL * trajectory_length + H_startpoint - H_endpoint + H_prior
+    negL_bound = KL * trajectory_length + H_startpoint - H_endpoint + H_prior
 
     negL_gauss = COMMON
 
@@ -451,6 +487,26 @@ if __name__ == "__main__":
 
     print("k shape is ", image_.shape)
 
-    mu, sigma = generate_temporal_readout(100, image_, n_temporal_basis)
+    diff = Diffusion(
+             main_key,
+        n_temporal_basis=n_temporal_basis,
+        spatial_width=spatial_width,
+        n_hidden_dense_lower_output=n_hidden_dense_lower_output,
+        n_hidden_dense_lower=n_hidden_dense_lower,
+        n_hidden_dense_upper=n_hidden_dense_upper,
+        n_layers_conv=n_layers_conv,
+        n_layers_dense_lower=n_layers_dense_lower,
+        n_layers_dense_upper=n_layers_dense_upper,
+        n_colours=3,
+        n_hidden_conv=100,
+        trajectory_length = 1000
+            )
+
+    t = jax.random.choice(main_key, jnp.arange(1, 1000)) 
+    image, mu, sigma = diff.forward_diffusion(main_key, t, arr)
+    r_mu, r_sigma = diff.reverse_diffusion(t, image)
+    loss = neg_loglikelihood( r_mu, r_sigma, mu, sigma, 1000, diff.beta_arr, n_colours=3)
+
+    print(loss)
 
     print(f"mu shape is {mu.shape} and sigma shape is {sigma.shape}")
