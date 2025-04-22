@@ -212,6 +212,7 @@ print(arr.shape)
 
 # TODO: make this a config
 
+
 # TODO: change name
 class Diffusion(eqx.Module):
     temporal_basis: jax.Array
@@ -220,18 +221,25 @@ class Diffusion(eqx.Module):
 
     trajectory_length: int = eqx.static_field()
 
-
-    def __init__(self, key, spatial_width, n_colours,  trajectory_length=1000, n_temporal_basis=10, n_hidden_dense_lower=500, step1_beta=0.001):
+    def __init__(
+        self,
+        key,
+        spatial_width,
+        n_colours,
+        trajectory_length=1000,
+        n_temporal_basis=10,
+        n_hidden_dense_lower=500,
+        step1_beta=0.001,
+    ):
         self.trajectory_length = 1000
 
-        self.temporal_basis = self.generate_temporal_basis(trajectory_length, n_temporal_basis)
+        self.temporal_basis = self.generate_temporal_basis(
+            trajectory_length, n_temporal_basis
+        )
         self.min_beta = self.generate_min_beta(trajectory_length, step1_beta)
         self.beta_arr = self.generate_beta_arr()
 
-
-
         self.beta_perturb_coefficients = jax.random.Normal(key, (n_temporal_basis,))
-        
 
     def get_t_weights(self, t):
         # output: [trajectory_length, 1]
@@ -240,68 +248,67 @@ class Diffusion(eqx.Module):
         weights = jnp.maximum(0.0, 1.0 - diff)
         return weights[:, None]
 
-
     def generate_temporal_basis(self, trajectory_length, n_basis):
 
         temporal_basis = jnp.zeros((trajectory_length, n_basis))
 
-        xx = jnp.linspace(-1,1,trajectory_length) # [trajectory_length, :]
+        xx = jnp.linspace(-1, 1, trajectory_length)  # [trajectory_length, :]
 
-        x_centers = jnp.linspace(-1,1,n_basis)
+        x_centers = jnp.linspace(-1, 1, n_basis)
 
-        width = (x_centers[1] - x_centers[0])/2.
+        width = (x_centers[1] - x_centers[0]) / 2.0
 
-        temporal_basis = jnp.exp(-(xx[:,None] - x_centers[None,:])**2 / (2*width**2))
+        temporal_basis = jnp.exp(
+            -((xx[:, None] - x_centers[None, :]) ** 2) / (2 * width**2)
+        )
 
         print(f"temporal_basis shape is {temporal_basis.shape}")
-        
-        temporal_basis /= jnp.sum(temporal_basis, axis=1).reshape((-1,1))
+
+        temporal_basis /= jnp.sum(temporal_basis, axis=1).reshape((-1, 1))
         temporal_basis = temporal_basis.T
 
         print(f"temporal_basis shape is {temporal_basis.shape}")
 
-        return temporal_basis # [self.n_basis, trajectory_length]
-
+        return temporal_basis  # [self.n_basis, trajectory_length]
 
     def generate_temporal_readout(self, trajectory_length, Z, t):
 
         Z = Z.reshape((32, 32, 3, 2, 10))
 
-        temp_basis =  generate_temporal_basis(trajectory_length, 10)
+        temp_basis = generate_temporal_basis(trajectory_length, 10)
 
         t_weights = get_t_weights(trajectory_length, t)
 
-        coeff_weights = temp_basis @ t_weights # [10,1]
+        coeff_weights = temp_basis @ t_weights  # [10,1]
 
         concat_coeffs = Z @ coeff_weights
 
         print(f"concat_coeffs weights are: {concat_coeffs.shape}")
 
-        mu_coeff = jnp.permute_dims(concat_coeffs[:,:,:,0], (2,0,1,3)).squeeze(-1)
+        mu_coeff = jnp.permute_dims(concat_coeffs[:, :, :, 0], (2, 0, 1, 3)).squeeze(-1)
 
-        sigma_coeff = jnp.permute_dims(concat_coeffs[:,:,:,1], (2,0,1,3)).squeeze(-1)
+        sigma_coeff = jnp.permute_dims(concat_coeffs[:, :, :, 1], (2, 0, 1, 3)).squeeze(
+            -1
+        )
 
         return mu_coeff, sigma_coeff
 
-
     def generate_min_beta(self, trajectory_length, step1_beta):
         min_beta_val = 1e-6
-        min_beta_values = jnp.ones((trajectory_length,))*min_beta_val
-        min_beta_values += jnp.eye(4)[0,:]*step1_beta
+        min_beta_values = jnp.ones((trajectory_length,)) * min_beta_val
+        min_beta_values += jnp.eye(4)[0, :] * step1_beta
 
         return min_beta_values
-
-
 
     def generate_beta_arr(self):
 
         beta_perturb = self.temporal_basis.T @ self.beta_perturb_coefficients
 
-        beta_baseline = 1./jnp.linspace(trajectory_length, 2., trajectory_length)
-        beta_baseline_offset = jax.scipy.special.logit(beta_baseline) 
+        beta_baseline = 1.0 / jnp.linspace(trajectory_length, 2.0, trajectory_length)
+        beta_baseline_offset = jax.scipy.special.logit(beta_baseline)
 
         beta_arr = jax.nn.sigmoid(beta_perturb + beta_baseline)
-        beta_arr = self.min_beta + beta_arr *(1 - self.min_beta - 1e-5)
+        beta_arr = self.min_beta + beta_arr * (1 - self.min_beta - 1e-5)
 
         return beta_arr.reshape((trajectory_length, 1))
 
@@ -309,13 +316,11 @@ class Diffusion(eqx.Module):
 
         return self.get_t_weights(t) @ self.beta_arr
 
-
     # TODO: batch yet to come
     def generate_forward_diffusion_sample(self, key, image):
 
-
         # Remember to split key
-        t = jax.random.choice(key, jnp.arange(1, self.trajectory_length)) 
+        t = jax.random.choice(key, jnp.arange(1, self.trajectory_length))
         t_weights = self.get_t_weights(t)
 
         N = jax.random.Normal(key, image.shape)
@@ -327,27 +332,30 @@ class Diffusion(eqx.Module):
         alpha_cum_forward_arr = jnp.cumprod(alpha_arr)
         alpha_cum_forward = t_weights.T @ alpha_cum_forward_arr
 
-        image_uniformnoise =  image + jax.random.Uniform(key, image.shape)
+        image_uniformnoise = image + jax.random.Uniform(key, image.shape)
         # NOTE: the shape
-        image_noise = image_uniformnoise*jnp.power(alpha_cum_forward, 0.5) + N*jnp.power(1 - alpha_cum_forward , 0.5)
+        image_noise = image_uniformnoise * jnp.power(
+            alpha_cum_forward, 0.5
+        ) + N * jnp.power(1 - alpha_cum_forward, 0.5)
 
         # NOTE: figure why this even works
-        mu1_sc1 = jnp.power(alpha_cum_forward/alpha_forward, 0.5)
-        mu2_sc1 = 1. / jnp.power(alpha_forward, 0.5)
-        cov1 = 1. - alpha_cum_forward/alpha_forward
-        cov2 = beta_forward/alpha_forward
-        lam = 1./ cov1 +  1. /cov2
-        mu =  ((image_uniform_noise * mu1_sc1 / cov1) + (image_noise * mu2_sc1 / cov2)) / lam
-        sigma = jnp.power(lam, -0.5).reshape((1,1,1,1)) # huh?
+        mu1_sc1 = jnp.power(alpha_cum_forward / alpha_forward, 0.5)
+        mu2_sc1 = 1.0 / jnp.power(alpha_forward, 0.5)
+        cov1 = 1.0 - alpha_cum_forward / alpha_forward
+        cov2 = beta_forward / alpha_forward
+        lam = 1.0 / cov1 + 1.0 / cov2
+        mu = (
+            (image_uniform_noise * mu1_sc1 / cov1) + (image_noise * mu2_sc1 / cov2)
+        ) / lam
+        sigma = jnp.power(lam, -0.5).reshape((1, 1, 1, 1))  # huh?
 
         return image_noise, t, mu, sigma
-
 
     # TODO: name this better
     def get_mu_sigma(self, noised_image, t):
 
         Z = self.mlp(noised_image)
-        mu_coeff, beta_coeff = self.temporal_readout(Z,t)
+        mu_coeff, beta_coeff = self.temporal_readout(Z, t)
 
         # reverse variance is a perturbation around forward variance  (why?)
         beta_forward = self.get_beta_forward(t)
@@ -357,54 +365,51 @@ class Diffusion(eqx.Module):
 
         sigma = jnp.power(beta_reverse, 0.5)
 
-        mu = noised_image*jnp.power(1. - beta_forward, 0.5) + mu_coeff*jnp.power(beta_forward, 0.5)
+        mu = noised_image * jnp.power(1.0 - beta_forward, 0.5) + mu_coeff * jnp.power(
+            beta_forward, 0.5
+        )
 
         return mu, sigma
 
 
-    def get_beta_full_trajectory(self):
-        """
+def neg_loglikelihood(
+    mu,
+    sigma,
+    mu_posterior,
+    sigma_posterior,
+    trajectory_length,
+    covariance_schedule,
+    n_colours=3,
+):
 
-        Return the cumulative covariance from the entire forward trajectory.
-        Why the convoluted route? Because the normal route is numerically unstable
+    # Why the convoluted route? Because the normal route is numerically unstable
+    alpha_arr = 1.0 - covariance_schedule
+    cumulative_covariance(1.0 - jnp.exp(jnp.log(alpha_arr).sum()))
 
-        """
+    KL = (
+        jnp.log(sigma)
+        - jnp.log(sigma_posterior)
+        + ((sigma_posterior**2 + (mu_posterior - mu) ** 2) / (2 * sigma**2))
+        - 0.5
+    )
 
-        
+    COMMON = 0.5 * (1 + jnp.log(2 * jnp.pi))
 
-
-
-
-def neg_loglikelihood(mu, sigma, mu_posterior, sigma_posterior, trajectory_length, covariance_schedule, n_colours=3):
-
-    alpha_arr = 1. - covariance_schedule
-    cumulative_covariance (1. - jnp.exp(jnp.log(alpha_arr).sum()))
-
-    KL =  jnp.log(sigma) - jnp.log(sigma_posterior) + ((sigma_posterior**2 + (mu_posterior - mu)**2) / (2*sigma**2)) - 0.5
-
-
-    COMMON = 0.5 *(1 + jnp.log(2*jnp.pi))
-
-    H_startpoint = COMMON + 0.5*jnp.log(covariance_schedule[0])
-    H_endpoint = COMMON + 0.5*jnp.log(cumulative_covariance)
+    H_startpoint = COMMON + 0.5 * jnp.log(covariance_schedule[0])
+    H_endpoint = COMMON + 0.5 * jnp.log(cumulative_covariance)
     H_prior = COMMON
 
-    negl_bound = KL*trajectory_length + H_startpoint - H_endpoint + H_prior
+    negl_bound = KL * trajectory_length + H_startpoint - H_endpoint + H_prior
 
     negL_gauss = COMMON
 
     negL_diff = negL_bound - negL_gauss
 
-    L_diff_bits = negL_diff / jnp.log(2.)
+    L_diff_bits = negL_diff / jnp.log(2.0)
 
-    L_diff_bits_avg = L_diff_bits.mean()*n_colours
+    L_diff_bits_avg = L_diff_bits.mean() * n_colours
 
     return L_diff_bits_avg
-
-
-
-
-
 
 
 if __name__ == "__main__":
@@ -446,6 +451,6 @@ if __name__ == "__main__":
 
     print("k shape is ", image_.shape)
 
-    mu,sigma = generate_temporal_readout(100, image_, n_temporal_basis)
+    mu, sigma = generate_temporal_readout(100, image_, n_temporal_basis)
 
     print(f"mu shape is {mu.shape} and sigma shape is {sigma.shape}")
