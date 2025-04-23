@@ -11,6 +11,7 @@ import torchvision.transforms as transforms
 from dataclasses import dataclass
 import functools as ft
 from jax.tree_util import tree_structure, tree_flatten, tree_flatten_with_path
+import pprint
 
 
 # delete after
@@ -147,7 +148,6 @@ class MLPConvDense(eqx.Module):
 
         X = x.reshape((self.colours * self.spatial_width**2))
         Y_dense = self.mlp_dense_lower(X)
-        print(f"Y shape is {Y.shape}")
         Y_dense = X.reshape((self.spatial_width, self.spatial_width, 3))
 
         Z = jnp.concat(
@@ -160,11 +160,7 @@ class MLPConvDense(eqx.Module):
 
         Z = jnp.permute_dims(Z, (2, 0, 1))
 
-        print(f"Z shape is {Z.shape}")
-
         Z = self.mlp_dense_upper(Z)
-
-        print(f"Z shape is {Z.shape}")
 
         Z = jnp.permute_dims(Z, (1, 2, 0))
 
@@ -172,17 +168,6 @@ class MLPConvDense(eqx.Module):
 
 
 # ----------------------------------------------------------------------
-
-train_dataset = torchvision.datasets.CIFAR10(
-    "CIFAR10", train=True, download=True, transform=transforms.ToTensor()
-)
-
-trainloader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=100, shuffle=True, drop_last=True
-)
-
-
-count = 2
 
 import numpy as np
 
@@ -194,10 +179,6 @@ import numpy as np
 #
 #    count -= 1
 
-
-arr = train_dataset[0][0].numpy()
-
-print(arr.shape)
 
 # arr = arr.reshape((C, W//2 , 2 , H // 2 , 2))
 # arr = arr.mean(dim=4)
@@ -233,10 +214,10 @@ class Diffusion(eqx.Module):
         n_colours,
         trajectory_length=1000,
         n_temporal_basis=10,
-        n_hidden_dense_lower=500,
+        n_hidden_dense_lower=1000,
         n_hidden_dense_lower_output=2,
-        n_hidden_dense_upper=20,
-        n_hidden_conv=20,
+        n_hidden_dense_upper=100,
+        n_hidden_conv=100,
         n_layers_conv=4,
         n_layers_dense_lower=4,
         n_layers_dense_upper=2,
@@ -258,8 +239,6 @@ class Diffusion(eqx.Module):
 
         beta_perturb_coefficients = jax.random.normal(key_beta, (n_temporal_basis,))
         self.beta_arr = self.generate_beta_arr(min_beta, beta_perturb_coefficients)
-
-        
 
         self.mlpconv =  MLPConvDense(
                 key_mlpconv,
@@ -296,12 +275,8 @@ class Diffusion(eqx.Module):
             -((xx[:, None] - x_centers[None, :]) ** 2) / (2 * width**2)
         )
 
-        print(f"temporal_basis shape is {temporal_basis.shape}")
-
         temporal_basis /= jnp.sum(temporal_basis, axis=1).reshape((-1, 1))
         temporal_basis = temporal_basis.T
-
-        print(f"temporal_basis shape is {temporal_basis.shape}")
 
         return temporal_basis  # [self.n_basis, trajectory_length]
 
@@ -314,8 +289,6 @@ class Diffusion(eqx.Module):
         coeff_weights = self.temporal_basis @ t_weights  # [10,1]
 
         concat_coeffs = Z @ coeff_weights
-
-        print(f"concat_coeffs weights are: {concat_coeffs.shape}")
 
         mu_coeff = jnp.permute_dims(concat_coeffs[:, :, :, 0], (2, 0, 1, 3)).squeeze(-1)
 
@@ -349,7 +322,7 @@ class Diffusion(eqx.Module):
         return self.get_t_weights(t).T @ self.beta_arr
 
     # TODO: batch yet to come
-    def forward_diffusion(self, key, t,  image):
+    def forward_diffusion(self, key, t,  image,  noise_amp):
 
         # Remember to split key
         choice_key, normal_key, uniform_key = jax.random.split(key,3) 
@@ -359,7 +332,7 @@ class Diffusion(eqx.Module):
         t_weights = self.get_t_weights(t)
 
         N = jax.random.normal(normal_key, image.shape)
-        U = jax.random.uniform(uniform_key, image.shape)
+        U = jax.random.uniform(uniform_key, image.shape, minval=-0.5, maxval=0.5)
 
         beta_forward = self.get_beta_forward(t)
         alpha_forward = 1 - beta_forward
@@ -368,7 +341,7 @@ class Diffusion(eqx.Module):
         alpha_cum_forward_arr = jnp.cumprod(alpha_arr)
         alpha_cum_forward = t_weights.T @ alpha_cum_forward_arr
 
-        image_uniform_noise = image + U 
+        image_uniform_noise = image + noise_amp*U 
         # NOTE: the shape
         image_noise = image_uniform_noise * jnp.power(
             alpha_cum_forward, 0.5
@@ -406,10 +379,6 @@ class Diffusion(eqx.Module):
         )
 
         return mu, sigma
-
-
-class Diffusion2(eqx.Module):
-    egg: jax.Array
 
 
 
@@ -454,18 +423,25 @@ def neg_loglikelihood(
 
 
 @eqx.filter_value_and_grad
-def compute_loss(model_, key, t, images):
-    keys = jax.random.split(key, 100)
+def compute_loss(model_, key, t, images, noise_amp):
+    keys = jax.random.split(key, images.shape[0])
 
-    v_forward_diffusion = jax.vmap(model_.forward_diffusion, in_axes=(0,None,0))
+    v_forward_diffusion = jax.vmap(model_.forward_diffusion, in_axes=(0,None,0,None))
     v_reverse_diffusion = jax.vmap(model_.reverse_diffusion, in_axes=(None,0))
 
-    image, mu, sigma = v_forward_diffusion(keys, t, images)
+    image, mu, sigma = v_forward_diffusion(keys, t, images, noise_amp)
     r_mu, r_sigma = v_reverse_diffusion(t, image)
-    print(f"Shapes: {image.shape}, {mu.shape}, {sigma.shape}, {r_mu.shape}, {sigma.shape}")
     loss =  neg_loglikelihood(r_mu, r_sigma, mu, sigma, 1000, model_.beta_arr, 3)
 
     return loss
+
+
+def named_grad_norms(grads):
+    flat = tree_flatten_with_path(grads)[0]
+    return {
+        ".".join(str(k) for k in path): jnp.sqrt(jnp.sum(leaf**2))
+        for path, leaf in flat if leaf is not None
+    }
 
 
 
@@ -477,36 +453,12 @@ if __name__ == "__main__":
     n_hidden_dense_lower_output = 5
     n_hidden_dense_lower = 1000
     n_hidden_dense_upper = 100
-    n_layers_conv = 100
+    n_layers_conv = 6
     n_layers_dense_lower = 6
-    n_layers_dense_upper = 100
+    n_layers_dense_upper = 4
 
     spatial_width = 32
     n_temporal_basis = 10
-
-    # c = SingleScaleConvolution(main_key, 3, 100, 32, 3)
-
-    # c = MultiLayerConvolution(main_key, 00, 32, 3)
-
-    # k = c(arr)
-
-    mlpconv = MLPConvDense(
-        main_key,
-        n_temporal_basis=n_temporal_basis,
-        spatial_width=spatial_width,
-        n_hidden_dense_lower_output=n_hidden_dense_lower_output,
-        n_hidden_dense_lower=n_hidden_dense_lower,
-        n_hidden_dense_upper=n_hidden_dense_upper,
-        n_layers_conv=n_layers_conv,
-        n_layers_dense_lower=n_layers_dense_lower,
-        n_layers_dense_upper=n_layers_dense_upper,
-        n_colours=3,
-        n_hidden_conv=100,
-    )
-
-    image_ = mlpconv(arr)
-
-    print("k shape is ", image_.shape)
 
     model = Diffusion(
              main_key,
@@ -519,31 +471,58 @@ if __name__ == "__main__":
         n_layers_dense_lower=n_layers_dense_lower,
         n_layers_dense_upper=n_layers_dense_upper,
         n_colours=3,
-        n_hidden_conv=100,
+        n_hidden_conv=n_layers_conv,
         trajectory_length = 1000
     )
 
     #v_neg_loglikelihood = jax.vmap(neg_loglikelihood, in_axes=(0,0,0,0,None,None,None))
 
-    t = jax.random.choice(main_key, jnp.arange(1, 1000)) 
+    mean = [0.4914, 0.4822, 0.4465]
+    std  = [0.2470, 0.2435, 0.2616]
+
+    transform = transforms.Compose([ transforms.ToTensor(), transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])])
+
+    train_dataset = torchvision.datasets.CIFAR10("CIFAR10", train=True, download=True, transform=transform)
+    trainloader = torch.utils.data.DataLoader( train_dataset, batch_size=200, shuffle=True, drop_last=True)
+
+    original_noise_level = 1.0 / 255.  # one pixel intensity step in [0,1] scale
+    normalized_noise_level = original_noise_level / 0.5
 
     learning_rate = 1e-3
 
-    optimizer = optax.adam(learning_rate)
+    lr_schedule = optax.exponential_decay(
+            init_value=learning_rate,
+            transition_steps=200,    # your batches_per_epoch
+            decay_rate=0.97,
+            staircase=True
+    )
+
+    optimizer = optax.chain( optax.clip_by_global_norm(1.0),      # optional safety like RemoveNotFinite
+                             optax.rmsprop(learning_rate=lr_schedule))
+
     opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
 
-    for batch in trainloader:
-        
-        images = batch[0].numpy()
 
-        loss, grads = compute_loss(model, main_key,t, images)
+    def infinite_trainloader():
+        while True:
+            yield from trainloader
+
+    steps = 5
+
+    for step, (batch, y) in zip(range(steps), infinite_trainloader()):
+
+        main_key, sub_key, time_key = jax.random.split(main_key, 3)
+
+        t = jax.random.choice(time_key, jnp.arange(1, 1000))
+        
+        loss, grads = compute_loss(model, main_key,t, batch.numpy(), normalized_noise_level)
+
+        pprint.pp(named_grad_norms(grads))
 
         updates, opt_state = optimizer.update(grads, opt_state, eqx.filter(model, eqx.is_inexact_array))
         model = eqx.apply_updates(model, updates)
 
-        print(loss.item())
-
-        break
+        print(f"loss for t={t} is {loss.item()}")
 
     print("END")
 
