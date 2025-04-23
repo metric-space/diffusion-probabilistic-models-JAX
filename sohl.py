@@ -408,6 +408,10 @@ class Diffusion(eqx.Module):
         return mu, sigma
 
 
+class Diffusion2(eqx.Module):
+    egg: jax.Array
+
+
 
 def neg_loglikelihood(
     mu,
@@ -449,8 +453,24 @@ def neg_loglikelihood(
     return L_diff_bits_avg
 
 
+@eqx.filter_value_and_grad
+def compute_loss(model_, key, t, images):
+    keys = jax.random.split(key, 100)
+
+    v_forward_diffusion = jax.vmap(model_.forward_diffusion, in_axes=(0,None,0))
+    v_reverse_diffusion = jax.vmap(model_.reverse_diffusion, in_axes=(None,0))
+
+    image, mu, sigma = v_forward_diffusion(keys, t, images)
+    r_mu, r_sigma = v_reverse_diffusion(t, image)
+    print(f"Shapes: {image.shape}, {mu.shape}, {sigma.shape}, {r_mu.shape}, {sigma.shape}")
+    loss =  neg_loglikelihood(r_mu, r_sigma, mu, sigma, 1000, model_.beta_arr, 3)
+
+    return loss
+
+
+
 if __name__ == "__main__":
-    key = jax.random.PRNGKey(0)
+    key = jax.random.PRNGKey(1234)
 
     k, main_key = jax.random.split(key, 2)
 
@@ -503,22 +523,7 @@ if __name__ == "__main__":
         trajectory_length = 1000
     )
 
-    @eqx.filter_value_and_grad
-    def compute_loss(key, t, model_, images):
-        keys = jax.random.split(key, 100)
-
-        v_forward_diffusion = jax.vmap(model_.forward_diffusion, in_axes=(0,None,0))
-        v_reverse_diffusion = jax.vmap(model_.reverse_diffusion, in_axes=(None,0))
-
-        image, mu, sigma = v_forward_diffusion(keys, t, images)
-        r_mu, r_sigma = v_reverse_diffusion(t, image)
-        print(f"Shapes: {image.shape}, {mu.shape}, {sigma.shape}, {r_mu.shape}, {sigma.shape}")
-        loss =  neg_loglikelihood(r_mu, r_sigma, mu, sigma, 1000, model_.beta_arr, 3)
-
-        return model_.beta_arr.mean()
-
-    
-    v_neg_loglikelihood = jax.vmap(neg_loglikelihood, in_axes=(0,0,0,0,None,None,None))
+    #v_neg_loglikelihood = jax.vmap(neg_loglikelihood, in_axes=(0,0,0,0,None,None,None))
 
     t = jax.random.choice(main_key, jnp.arange(1, 1000)) 
 
@@ -527,29 +532,11 @@ if __name__ == "__main__":
     optimizer = optax.adam(learning_rate)
     opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
 
-    # ---- debug code ------------------
-    params = eqx.filter(model, eqx.is_inexact_array)
-    flat = tree_flatten_with_path(params)
-
-    for path, leaf in flat[0]:
-        print(".".join(str(p) for p in path), "-->", leaf.shape if hasattr(leaf, "shape") else "scalar",  leaf.dtype if getattr(leaf, 'dtype', None) else " No dtype")
-
-    leaves, _ = tree_flatten(opt_state)
-    
-
     for batch in trainloader:
         
-        print(batch[0].shape)
-
         images = batch[0].numpy()
 
-        loss, grads = compute_loss(main_key,t,  model, images)
-        
-        print(loss.item())
-        print(grads)
-
-        print("GRAD STRUCTURE")
-        print(jax.tree_util.tree_structure(grads))
+        loss, grads = compute_loss(model, main_key,t, images)
 
         updates, opt_state = optimizer.update(grads, opt_state, eqx.filter(model, eqx.is_inexact_array))
         model = eqx.apply_updates(model, updates)
