@@ -200,7 +200,7 @@ import numpy as np
 # TODO: change name
 class Diffusion(eqx.Module):
     temporal_basis: jax.Array
-    beta_arr: jax.Array
+    beta_arr: jax.Array = eqx.static_field()
     mlpconv: eqx.Module
 
     trajectory_length: int = eqx.static_field()
@@ -434,7 +434,7 @@ def compute_loss(model_, key, t, images, noise_amp):
 
     image, mu, sigma = v_forward_diffusion(keys, t, images, noise_amp)
     r_mu, r_sigma = v_reverse_diffusion(t, image)
-    loss =  neg_loglikelihood(r_mu, r_sigma, mu, sigma, 1000, model_.beta_arr, 3)
+    loss =  neg_loglikelihood(r_mu, r_sigma, mu, sigma, model_.trajectory_length , model_.beta_arr, 3)
 
     return loss
 
@@ -464,6 +464,8 @@ if __name__ == "__main__":
     spatial_width = 32
     n_temporal_basis = 10
 
+    trajectory_length = 200
+
     model = Diffusion(
              main_key,
         n_temporal_basis=n_temporal_basis,
@@ -476,7 +478,7 @@ if __name__ == "__main__":
         n_layers_dense_upper=n_layers_dense_upper,
         n_colours=3,
         n_hidden_conv=n_hidden_conv,
-        trajectory_length = 1000
+        trajectory_length = trajectory_length 
     )
 
     #v_neg_loglikelihood = jax.vmap(neg_loglikelihood, in_axes=(0,0,0,0,None,None,None))
@@ -511,13 +513,13 @@ if __name__ == "__main__":
         while True:
             yield from trainloader
 
-    steps = 5
+    steps = 100
 
     for step, (batch, y) in zip(range(steps), infinite_trainloader()):
 
         main_key, sub_key, time_key = jax.random.split(main_key, 3)
 
-        t = jax.random.choice(time_key, jnp.arange(1, 1000))
+        t = jax.random.choice(time_key, jnp.arange(1,  trajectory_length))
         
         loss, grads = compute_loss(model, main_key,t, batch.numpy(), normalized_noise_level)
 
