@@ -9,6 +9,8 @@ import torchvision
 import torch
 import torchvision.transforms as transforms
 from dataclasses import dataclass
+import functools as ft
+from jax.tree_util import tree_structure, tree_flatten, tree_flatten_with_path
 
 
 # delete after
@@ -216,9 +218,7 @@ print(arr.shape)
 # TODO: change name
 class Diffusion(eqx.Module):
     temporal_basis: jax.Array
-    beta_perturb_coefficients: jax.Array
     beta_arr: jax.Array
-    min_beta: jax.Array
     mlpconv: eqx.Module
 
     trajectory_length: int = eqx.static_field()
@@ -254,10 +254,10 @@ class Diffusion(eqx.Module):
         self.temporal_basis = self.generate_temporal_basis(
             trajectory_length, n_temporal_basis
         )
-        self.min_beta = self.generate_min_beta(trajectory_length, step1_beta)
+        min_beta = self.generate_min_beta(trajectory_length, step1_beta)
 
-        self.beta_perturb_coefficients = jax.random.normal(key_beta, (n_temporal_basis,))
-        self.beta_arr = self.generate_beta_arr()
+        beta_perturb_coefficients = jax.random.normal(key_beta, (n_temporal_basis,))
+        self.beta_arr = self.generate_beta_arr(min_beta, beta_perturb_coefficients)
 
         
 
@@ -332,15 +332,15 @@ class Diffusion(eqx.Module):
 
         return min_beta_values
 
-    def generate_beta_arr(self):
+    def generate_beta_arr(self, min_beta, beta_perturb_coefficients):
 
-        beta_perturb = self.temporal_basis.T @ self.beta_perturb_coefficients
+        beta_perturb = self.temporal_basis.T @ beta_perturb_coefficients
 
         beta_baseline = 1.0 / jnp.linspace(self.trajectory_length, 2.0, self.trajectory_length)
         beta_baseline_offset = jax.scipy.special.logit(beta_baseline)
 
         beta_arr = jax.nn.sigmoid(beta_perturb + beta_baseline)
-        beta_arr = self.min_beta + beta_arr * (1 - self.min_beta - 1e-5)
+        beta_arr = min_beta + beta_arr * (1 - min_beta - 1e-5)
 
         return beta_arr.reshape((self.trajectory_length, 1))
 
@@ -406,6 +406,7 @@ class Diffusion(eqx.Module):
         )
 
         return mu, sigma
+
 
 
 def neg_loglikelihood(
@@ -487,7 +488,7 @@ if __name__ == "__main__":
 
     print("k shape is ", image_.shape)
 
-    diff = Diffusion(
+    model = Diffusion(
              main_key,
         n_temporal_basis=n_temporal_basis,
         spatial_width=spatial_width,
@@ -500,13 +501,63 @@ if __name__ == "__main__":
         n_colours=3,
         n_hidden_conv=100,
         trajectory_length = 1000
-            )
+    )
+
+    @eqx.filter_value_and_grad
+    def compute_loss(key, t, model_, images):
+        keys = jax.random.split(key, 100)
+
+        v_forward_diffusion = jax.vmap(model_.forward_diffusion, in_axes=(0,None,0))
+        v_reverse_diffusion = jax.vmap(model_.reverse_diffusion, in_axes=(None,0))
+
+        image, mu, sigma = v_forward_diffusion(keys, t, images)
+        r_mu, r_sigma = v_reverse_diffusion(t, image)
+        print(f"Shapes: {image.shape}, {mu.shape}, {sigma.shape}, {r_mu.shape}, {sigma.shape}")
+        loss =  neg_loglikelihood(r_mu, r_sigma, mu, sigma, 1000, model_.beta_arr, 3)
+
+        return model_.beta_arr.mean()
+
+    
+    v_neg_loglikelihood = jax.vmap(neg_loglikelihood, in_axes=(0,0,0,0,None,None,None))
 
     t = jax.random.choice(main_key, jnp.arange(1, 1000)) 
-    image, mu, sigma = diff.forward_diffusion(main_key, t, arr)
-    r_mu, r_sigma = diff.reverse_diffusion(t, image)
-    loss = neg_loglikelihood( r_mu, r_sigma, mu, sigma, 1000, diff.beta_arr, n_colours=3)
 
-    print(loss)
+    learning_rate = 1e-3
+
+    optimizer = optax.adam(learning_rate)
+    opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
+
+    # ---- debug code ------------------
+    params = eqx.filter(model, eqx.is_inexact_array)
+    flat = tree_flatten_with_path(params)
+
+    for path, leaf in flat[0]:
+        print(".".join(str(p) for p in path), "-->", leaf.shape if hasattr(leaf, "shape") else "scalar",  leaf.dtype if getattr(leaf, 'dtype', None) else " No dtype")
+
+    leaves, _ = tree_flatten(opt_state)
+    
+
+    for batch in trainloader:
+        
+        print(batch[0].shape)
+
+        images = batch[0].numpy()
+
+        loss, grads = compute_loss(main_key,t,  model, images)
+        
+        print(loss.item())
+        print(grads)
+
+        print("GRAD STRUCTURE")
+        print(jax.tree_util.tree_structure(grads))
+
+        updates, opt_state = optimizer.update(grads, opt_state, eqx.filter(model, eqx.is_inexact_array))
+        model = eqx.apply_updates(model, updates)
+
+        print(loss.item())
+
+        break
+
+    print("END")
 
     print(f"mu shape is {mu.shape} and sigma shape is {sigma.shape}")
