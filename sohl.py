@@ -55,13 +55,13 @@ class SingleScaleConvolution(eqx.Module):
 
 # TODO: change filter to kernel, it's 2025 not 2015
 class MultiLayerConvolution(eqx.Module):
-    layers: list  # or sequential?
+    layers: eqx.nn.Sequential  # or sequential?
 
     def __init__(
         self, key, n_layers, n_hidden, spatial_width, n_colours, filter_size=3
     ):
 
-        self.layers = []
+        layers = []
         # split keys here
 
         keys_ = jax.random.split(key, n_layers + 1)
@@ -69,21 +69,21 @@ class MultiLayerConvolution(eqx.Module):
         in_channels = n_colours
 
         for i in range(n_layers):
-            self.layers.append(
+            layers.append(
                 SingleScaleConvolution(
                     keys_[i + 1], in_channels, n_hidden, spatial_width, filter_size
                 )
             )
             in_channels = n_hidden
 
-        self.layers = eqx.nn.Sequential(self.layers)
+        self.layers = eqx.nn.Sequential(layers)
 
     def __call__(self, x):
         return self.layers(x)
 
 
 class MLPConvDense(eqx.Module):
-    mlp_dense_upper: eqx.nn.MLP
+    mlp_dense_upper: eqx.nn.Conv
     mlp_dense_lower: eqx.nn.MLP
     conv: MultiLayerConvolution
 
@@ -116,6 +116,7 @@ class MLPConvDense(eqx.Module):
 
         input_ = n_colours * spatial_width**2
         output_ = n_hidden_dense_lower_output * spatial_width**2
+        print(f"output is {output_}")
         self.mlp_dense_lower = eqx.nn.MLP(
             key=key_lower,
             activation=LeakyRelu,
@@ -125,7 +126,7 @@ class MLPConvDense(eqx.Module):
             width_size=n_hidden_dense_lower,
         )
 
-        input_ = n_hidden_conv + 3  # n_hidden_dense_lower_output
+        input_ = n_hidden_conv + n_hidden_dense_lower_output
         output_ = n_colours * n_temporal_basis * 2
         self.mlp_dense_upper = eqx.nn.Conv(
             key=key_upper,
@@ -148,7 +149,7 @@ class MLPConvDense(eqx.Module):
 
         X = x.reshape((self.colours * self.spatial_width**2))
         Y_dense = self.mlp_dense_lower(X)
-        Y_dense = X.reshape((self.spatial_width, self.spatial_width, 3))
+        Y_dense = Y_dense.reshape((self.spatial_width, self.spatial_width, 5))
 
         Z = jnp.concat(
             [
@@ -214,13 +215,13 @@ class Diffusion(eqx.Module):
         n_colours,
         trajectory_length=1000,
         n_temporal_basis=10,
-        n_hidden_dense_lower=1000,
-        n_hidden_dense_lower_output=2,
+        n_hidden_dense_lower=100,
+        n_hidden_dense_lower_output=5,
         n_hidden_dense_upper=100,
         n_hidden_conv=100,
-        n_layers_conv=4,
-        n_layers_dense_lower=4,
-        n_layers_dense_upper=2,
+        n_layers_conv=6,
+        n_layers_dense_lower=6,
+        n_layers_dense_upper=4,
         step1_beta=0.001,
     ):
 
@@ -300,8 +301,10 @@ class Diffusion(eqx.Module):
 
     def generate_min_beta(self, trajectory_length, step1_beta):
         min_beta_val = 1e-6
-        min_beta_values = jnp.ones((trajectory_length,)) * min_beta_val
-        min_beta_values += jnp.eye(trajectory_length)[0, :] * step1_beta
+        #min_beta_values = jnp.ones((trajectory_length,)) * min_beta_val
+        #min_beta_values += jnp.eye(trajectory_length)[0, :] * step1_beta
+
+        min_beta_values = jnp.linspace(1e-6, 0.01, trajectory_length)
 
         return min_beta_values
 
@@ -453,6 +456,7 @@ if __name__ == "__main__":
     n_hidden_dense_lower_output = 5
     n_hidden_dense_lower = 1000
     n_hidden_dense_upper = 100
+    n_hidden_conv = 100
     n_layers_conv = 6
     n_layers_dense_lower = 6
     n_layers_dense_upper = 4
@@ -471,7 +475,7 @@ if __name__ == "__main__":
         n_layers_dense_lower=n_layers_dense_lower,
         n_layers_dense_upper=n_layers_dense_upper,
         n_colours=3,
-        n_hidden_conv=n_layers_conv,
+        n_hidden_conv=n_hidden_conv,
         trajectory_length = 1000
     )
 
