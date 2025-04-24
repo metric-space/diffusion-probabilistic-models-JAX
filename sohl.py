@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import functools as ft
 from jax.tree_util import tree_structure, tree_flatten, tree_flatten_with_path
 import pprint
+import matplotlib.animation as animation
 
 
 # delete after
@@ -82,8 +83,32 @@ class MultiLayerConvolution(eqx.Module):
         return self.layers(x)
 
 
+class MultiLayerConvolution2(eqx.Module):
+    layers: eqx.nn.Sequential  # or sequential?
+
+    def __init__(
+        self, key, n_layers, input_, output_
+    ):
+
+        layers = []
+        # split keys here
+
+        keys_ = jax.random.split(key, n_layers + 1)
+
+        for i in range(n_layers):
+            layers.append(
+                     eqx.nn.Conv( key=keys_[i+1], num_spatial_dims=2, in_channels=input_, out_channels=output_, kernel_size=1,)
+            )
+            input_ = output_
+
+        self.layers = eqx.nn.Sequential(layers)
+
+    def __call__(self, x):
+        return self.layers(x)
+
+
 class MLPConvDense(eqx.Module):
-    mlp_dense_upper: eqx.nn.Conv
+    mlp_dense_upper: MultiLayerConvolution2
     mlp_dense_lower: eqx.nn.MLP
     conv: MultiLayerConvolution
 
@@ -128,12 +153,11 @@ class MLPConvDense(eqx.Module):
 
         input_ = n_hidden_conv + n_hidden_dense_lower_output
         output_ = n_colours * n_temporal_basis * 2
-        self.mlp_dense_upper = eqx.nn.Conv(
+        self.mlp_dense_upper = MultiLayerConvolution2(
             key=key_upper,
-            num_spatial_dims=2,
-            in_channels=input_,
-            out_channels=output_,
-            kernel_size=1,
+            n_layers=n_layers_dense_upper,
+            input_=input_,
+            output_=output_,
         )
 
         self.spatial_width = spatial_width
@@ -447,6 +471,44 @@ def named_grad_norms(grads):
     }
 
 
+def simple_inference(diffusion_model, key, timesteps, noise_shape, output_as_perturbation=True):
+    """
+
+     
+
+
+    """
+
+    keys_ = jax.random.split(key, timesteps + 1)
+
+    x = jax.random.normal(keys_[0], noise_shape)  # 1000,
+
+    steps = [x]
+
+    v_reverse_diffusion = jax.vmap(diffusion_model.reverse_diffusion, in_axes=(None,0))
+
+    for t in reversed(range(timesteps)):
+        mu, sigma = v_reverse_diffusion(t, x)
+        # split key here
+        if output_as_perturbation:
+            x += mu + jax.random.normal(keys_[t + 1], noise_shape) * sigma
+        else:
+            x = mu + jax.random.normal(keys_[t + 1], noise_shape) * sigma
+        steps.append(x)
+
+    print([x.shape for x in steps])
+
+    return jnp.stack(steps)  # [T, noise_shape ...] perhaps we should change this?
+
+
+def save_model(filename, model):
+
+    directory = "./models"
+
+    os.makedirs(directory, exist_ok=True)
+    with open(os.path.join(directory, filename), "wb") as f:
+        eqx.tree_serialise_leaves(f, model)
+
 
 if __name__ == "__main__":
     key = jax.random.PRNGKey(1234)
@@ -464,7 +526,7 @@ if __name__ == "__main__":
     spatial_width = 32
     n_temporal_basis = 10
 
-    trajectory_length = 200
+    trajectory_length = 500
 
     model = Diffusion(
              main_key,
@@ -513,7 +575,7 @@ if __name__ == "__main__":
         while True:
             yield from trainloader
 
-    steps = 100
+    steps = 10
 
     for step, (batch, y) in zip(range(steps), infinite_trainloader()):
 
@@ -521,7 +583,7 @@ if __name__ == "__main__":
 
         t = jax.random.choice(time_key, jnp.arange(1,  trajectory_length))
         
-        loss, grads = compute_loss(model, main_key,t, batch.numpy(), normalized_noise_level)
+        loss, grads = compute_loss(model, sub_key,t, batch.numpy(), normalized_noise_level)
 
         pprint.pp(named_grad_norms(grads))
 
@@ -530,6 +592,43 @@ if __name__ == "__main__":
 
         print(f"loss for t={t} is {loss.item()}")
 
-    print("END")
+    save_model("sohl_cifar.ex", model)
 
-    print(f"mu shape is {mu.shape} and sigma shape is {sigma.shape}")
+    # do inference
+
+    sampled = simple_inference(model, main_key, trajectory_length, (100,3,32,32), output_as_perturbation=False)
+
+
+    fix, ax = plt.subplots(figsize=(15,15))
+    im = ax.imshow(sampled[0,0].transpose(1, 2, 0))
+    ax.axis('off')
+    plt.savefig("denoised_cifar.png")
+
+    timesteps = sampled.shape[0]
+    images = sampled[:, 0]  # shape: (T, 3, 32, 32)
+    
+    # Normalize image data if needed
+    print(images.max())
+    #if images.max() > 1:
+    #    images = images / 255.0
+    
+    # Setup the figure and axis
+    fig, ax = plt.subplots(figsize=(4, 4))
+    im = ax.imshow(images[0].transpose(1, 2, 0))  # Convert (C, H, W) → (H, W, C)
+    ax.axis('off')
+    
+    # Animation function
+    def animate(i):
+        im.set_data(images[i].transpose(1, 2, 0))
+        return im,
+    
+    # Create animation
+    ani = animation.FuncAnimation(
+        fig, animate, frames=timesteps, interval=100, blit=True, repeat=True, repeat_delay=2500
+    )
+    
+    # Save as GIF
+    writer = animation.PillowWriter(fps=7, metadata=dict(artist='metric-space'))
+    ani.save('cifar.gif', writer=writer)
+    
+    print("✅ Animation saved as 'cifar.gif'")
