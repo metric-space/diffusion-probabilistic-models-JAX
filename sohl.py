@@ -21,7 +21,7 @@ from PIL import Image
 # --------------------- Network ----------------------------------------
 
 
-def LeakyRelu(x):
+def LeakyRelu(x, key=None):
     return jax.nn.leaky_relu(x, negative_slope=0.05)
 
 
@@ -99,6 +99,7 @@ class MultiLayerConvolution2(eqx.Module):
             layers.append(
                      eqx.nn.Conv( key=keys_[i+1], num_spatial_dims=2, in_channels=input_, out_channels=output_, kernel_size=1,)
             )
+            layers.append(LeakyRelu)
             input_ = output_
 
         self.layers = eqx.nn.Sequential(layers)
@@ -260,10 +261,10 @@ class Diffusion(eqx.Module):
         self.temporal_basis = self.generate_temporal_basis(
             trajectory_length, n_temporal_basis
         )
-        min_beta = self.generate_min_beta(trajectory_length, step1_beta)
+        #self.min_beta = self.generate_min_beta(trajectory_length, step1_beta)
 
-        beta_perturb_coefficients = jax.random.normal(key_beta, (n_temporal_basis,))
-        self.beta_arr = self.generate_beta_arr(min_beta, beta_perturb_coefficients)
+        #self.beta_perturb_coefficients = jax.random.normal(key_beta, (n_temporal_basis,))
+        self.beta_arr = jnp.linspace(1e-5,0.1,trajectory_length)   #self.generate_beta_arr(self.min_beta, self.beta_perturb_coefficients)
 
         self.mlpconv =  MLPConvDense(
                 key_mlpconv,
@@ -325,10 +326,10 @@ class Diffusion(eqx.Module):
 
     def generate_min_beta(self, trajectory_length, step1_beta):
         min_beta_val = 1e-6
-        #min_beta_values = jnp.ones((trajectory_length,)) * min_beta_val
-        #min_beta_values += jnp.eye(trajectory_length)[0, :] * step1_beta
+        min_beta_values = jnp.ones((trajectory_length,)) * min_beta_val
+        min_beta_values += jnp.eye(trajectory_length)[0, :] * step1_beta
 
-        min_beta_values = jnp.linspace(1e-6, 0.01, trajectory_length)
+        #min_beta_values = jnp.linspace(1e-6, 0.01, trajectory_length)
 
         return min_beta_values
 
@@ -416,7 +417,7 @@ def neg_loglikelihood(
     sigma_posterior,
     trajectory_length,
     covariance_schedule,
-    n_colours=3,
+    n_colours=1,
 ):
 
     # Why the convoluted route? Because the normal route is numerically unstable
@@ -458,7 +459,7 @@ def compute_loss(model_, key, t, images, noise_amp):
 
     image, mu, sigma = v_forward_diffusion(keys, t, images, noise_amp)
     r_mu, r_sigma = v_reverse_diffusion(t, image)
-    loss =  neg_loglikelihood(r_mu, r_sigma, mu, sigma, model_.trajectory_length , model_.beta_arr, 3)
+    loss =  neg_loglikelihood(r_mu, r_sigma, mu, sigma, model_.trajectory_length , model_.beta_arr, 1)
 
     return loss
 
@@ -523,10 +524,10 @@ if __name__ == "__main__":
     n_layers_dense_lower = 6
     n_layers_dense_upper = 4
 
-    spatial_width = 32
+    spatial_width = 28
     n_temporal_basis = 10
 
-    trajectory_length = 500
+    trajectory_length = 300
 
     model = Diffusion(
              main_key,
@@ -538,7 +539,7 @@ if __name__ == "__main__":
         n_layers_conv=n_layers_conv,
         n_layers_dense_lower=n_layers_dense_lower,
         n_layers_dense_upper=n_layers_dense_upper,
-        n_colours=3,
+        n_colours=1,
         n_hidden_conv=n_hidden_conv,
         trajectory_length = trajectory_length 
     )
@@ -548,9 +549,9 @@ if __name__ == "__main__":
     mean = [0.4914, 0.4822, 0.4465]
     std  = [0.2470, 0.2435, 0.2616]
 
-    transform = transforms.Compose([ transforms.ToTensor(), transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])])
+    transform = transforms.Compose([ transforms.ToTensor(), transforms.Normalize(mean = 0.1307, std = 0.3081)])
 
-    train_dataset = torchvision.datasets.CIFAR10("CIFAR10", train=True, download=True, transform=transform)
+    train_dataset = torchvision.datasets.MNIST("MNIST", train=True, download=True, transform=transform)
     trainloader = torch.utils.data.DataLoader( train_dataset, batch_size=200, shuffle=True, drop_last=True)
 
     original_noise_level = 1.0 / 255.  # one pixel intensity step in [0,1] scale
@@ -575,7 +576,7 @@ if __name__ == "__main__":
         while True:
             yield from trainloader
 
-    steps = 10
+    steps = 4000
 
     for step, (batch, y) in zip(range(steps), infinite_trainloader()):
 
@@ -596,13 +597,13 @@ if __name__ == "__main__":
 
     # do inference
 
-    sampled = simple_inference(model, main_key, trajectory_length, (100,3,32,32), output_as_perturbation=False)
+    sampled = simple_inference(model, main_key, trajectory_length, (100,1,28,28), output_as_perturbation=False)
 
 
     fix, ax = plt.subplots(figsize=(15,15))
-    im = ax.imshow(sampled[0,0].transpose(1, 2, 0))
+    im = ax.imshow(sampled[-1,0].transpose(1, 2, 0))
     ax.axis('off')
-    plt.savefig("denoised_cifar.png")
+    plt.savefig("denoised_mnist.png")
 
     timesteps = sampled.shape[0]
     images = sampled[:, 0]  # shape: (T, 3, 32, 32)
@@ -629,6 +630,6 @@ if __name__ == "__main__":
     
     # Save as GIF
     writer = animation.PillowWriter(fps=7, metadata=dict(artist='metric-space'))
-    ani.save('cifar.gif', writer=writer)
+    ani.save('mnist_cifar.gif', writer=writer)
     
     print("✅ Animation saved as 'cifar.gif'")
