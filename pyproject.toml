@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diffusion_probabilistic_models_JAX"
+version = "0.1.0"
+description = "JAX & Equinox reimplementation of 2015 paper \" Deep Unsupervised Learning using Nonequilibrium Thermodynamics \" "
+authors = [{ name = "metric-space", email = "functor.soup@gmail.com" }]
+dependencies = [
+  "jax[cuda12]",
+  "equinox",
+  "matplotlib",
+  "jaxtyping",
+  "optax",
+  "orbax"
+]
+requires-python = ">=3.9"
+
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+include = 'diffusion.py'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | build
+  | dist
+  | lib
+  | lib64
+  | __pycache__
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+known_first_party = ["diffusion_probabilistic_models_JAX"]
+skip = ["__init__.py"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+fix = true
+select = ["E", "F", "B", "I"]
+ignore = []
+
+[tool.setuptools]
+packages = ["inference", "utils", "sohl2015"]
+package-dir = {"" = "src"}
