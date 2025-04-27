@@ -1,3 +1,4 @@
+import os
 import equinox as eqx 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -14,8 +15,9 @@ def load_model(model, filename, key):
         return eqx.tree_deserialise_leaves(f, model)
 
 
-def generate_denoising_animation(gif_filename, trajectory, figsize=(4,4), fps=7, repeat_delay=2500):
+def generate_denoising_animation(gif_filename, trajectory, figsize=(4,4), fps=7, repeat_delay=2500, type="image"):
     fig, ax = plt.subplots(figsize=(4, 4))
+
     im = ax.imshow(trajectory[0].transpose(1, 2, 0))  # Convert (C, H, W) → (H, W, C)
     ax.axis('off')
     
@@ -28,9 +30,13 @@ def generate_denoising_animation(gif_filename, trajectory, figsize=(4,4), fps=7,
     
     # Create animation
     ani = animation.FuncAnimation(
-        fig, animate, frames=timesteps, interval=100, blit=True, repeat=True, repeat_delay=repeat_delay
+        fig, animate, frames=timesteps, blit=True, repeat=True, repeat_delay=repeat_delay
     )
     
     # Save as GIF
     writer = animation.PillowWriter(fps=fps, metadata=dict(artist='metric-space'))
     ani.save(gif_filename, writer=writer)
+
+
+def infinite_dataloader(dataloader):
+    yield from dataloader

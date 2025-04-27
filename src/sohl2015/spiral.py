@@ -77,6 +77,7 @@ def multivariate_normal_diag(x, mu, sigma, D=2, log=False):
 
 
 def pairwise_multivariate_normal_diag(x, mu, sigma):
+    # This is not broadcast to 0 in case there exists the batch dim, T has to be sandwiched
     broadcast_x = jnp.expand_dims(x, -2)
     D = x.shape[-1]
 
@@ -105,54 +106,36 @@ class RBFNetwork(eqx.Module):
         self.mu_params = jax.random.normal(mu_key, (T, H, D))
         self.sigma_params = jax.random.normal(sigma_key, (T, H, D))
 
-    def __call__(self, x, ts=None):
+    def __call__(self, ts, x):
         sigma_params = self.sigma_params
         mu_params = self.mu_params
 
         if ts is not None:
             # x is B,2
-            x = jnp.expand_dims(x, 1)  # why though?
-            sigma_params = jnp.expand_dims(sigma_params[ts], 0)
-            mu_params = jnp.expand_dims(mu_params[ts], 0)
+            x = jnp.expand_dims(x, 0)  # why though?
+            print("x shape is ", x)
+            sigma_params = jnp.expand_dims(sigma_params[ts], 0) # restore the T dim 
+            mu_params = jnp.expand_dims(mu_params[ts], 0) # restore the T dim
 
         pdf = pairwise_multivariate_normal_diag(
             x, self.center_params, jax.nn.sigmoid(self.shape_params)
         )
 
-        normalizer = 1.0 / pdf.sum(axis=-1, keepdims=True)  # b, T, 1
+        normalizer = 1.0 / pdf.sum(axis=-1, keepdims=True)  # T, 1
 
-        pdf = jnp.expand_dims(pdf, axis=-1)  # B, T, H, 1
+        pdf = jnp.expand_dims(pdf, axis=-1)  # T, H, 1
 
-        mu = (pdf * mu_params).sum(axis=2) * normalizer  # B, T, 2
+        mu = (pdf * mu_params).sum(axis=1) * normalizer  # T, 2
 
-        sigma_logits = (pdf * sigma_params).sum(axis=2) * normalizer  # B, T, 2
+        sigma_logits = (pdf * sigma_params).sum(axis=1) * normalizer  # T, 2
 
         sigma = jax.nn.sigmoid(sigma_logits)
 
         if ts is not None:
-            return mu.squeeze(1), sigma.squeeze(1)
+            print("DEBUG ", mu.shape, sigma.shape)
+            return mu.squeeze(0), sigma.squeeze(0)
 
         return mu, sigma
-
-
-def reverse_sample(rbf_network_model, key, samples=1000, timesteps=39):
-    # split key here
-
-    keys_ = jax.random.split(key, timesteps + 1)
-
-    x = jax.random.normal(keys_[0], (samples, 2))  # 1000,
-
-    steps = [x]
-
-    for t in reversed(range(timesteps)):
-        mu, sigma = rbf_network_model(x, t)
-        # split key here
-        x = x + mu + jax.random.normal(keys_[t + 1], (samples, 2)) * sigma
-        steps.append(x)
-
-    print([x.shape for x in steps])
-
-    return jnp.stack(steps)  # T, B, 2 perhaps we should change this?
 
 
 @eqx.filter_value_and_grad
@@ -162,34 +145,8 @@ def compute_loss(model, x, y):
     return -multivariate_normal_diag(y, x + mu, sigma, log=True).mean()
 
 
-# NOTE: this will save to a directory in the root directory, not a file in the root directory
-def save_model(filename, model):
-
-    directory = "./models"
-
-    os.makedirs(directory, exist_ok=True)
-    with open(os.path.join(directory, filename), "wb") as f:
-        eqx.tree_serialise_leaves(f, model)
-
-def load_model(filename, key):
-    with open(filename, "rb") as f:
-        model = RBFNetwork(key=key)
-        return eqx.tree_deserialise_leaves(f, model)
-
-
-
-@click.group()
-def cli():
-    """CLI for training or running inference."""
-    pass
-
-@cli.command()
-@click.option("--epochs", default=10000, help="Number of training epochs.")
-@click.option("--lr", default=0.007, help="Learning rate.")
-@click.option("--filename",default="spiral.epx",help="Filename to save model checkpoint")
 def train(epochs, lr, filename):
     """Run training."""
-    click.echo(f"Training for {epochs} epochs with lr={lr}")
 
     key = jax.random.PRNGKey(0)
     data = swissroll(1000, key)
@@ -236,77 +193,3 @@ def train(epochs, lr, filename):
         print(loss.item())
 
     save_model(filename, model)
-
-
-@cli.command()
-@click.option("--checkpoint", required=True, help="Path to model checkpoint.")
-def inference(checkpoint):
-    """Run inference."""
-
-    key = jax.random.PRNGKey(0)
-
-    key_model, key_sample = jax.random.split(key)
-
-    model = load_model(checkpoint, key)
-
-    click.echo(f"Running inference with checkpoint={checkpoint}")
-     
-    sampled = reverse_sample(model, key_sample)
-
-    print("plotting")
-
-    #fig, ax = plt.subplots(nrows=5, ncols=8, figsize=(15, 12))
-
-    #for i in range(5):
-    #    for j in range(8):
-    #        index = i * 8 + j
-    #        print(index)
-    #        ax[i, j].scatter(sampled[index][:, 0], sampled[index][:, 1])
-
-    #plt.savefig("final_with_trajectories.png")
-
-    #fix, ax = plt.subplots(figsize=(15,15))
-    #ax.scatter(sampled[-1][:,0], sampled[-1][:,1])
-    #plt.savefig("denoised.png")
-
-
-    fig, ax = plt.subplots(figsize=(5,5))
-    ax.set_xlim([-2, 2])
-    ax.set_ylim([-2, 2])
-
-    print(sampled[0][:,0][0], sampled[0][:,1][1])
-
-    scat = ax.scatter(sampled[0][:,0], sampled[0][:,1])
-
-    x = jnp.linspace(0.2, 1, 40)
-    print(x)
-
-    def animate(i):
-         if i > 0 :
-            data = [(x[0], x[1]) for x in sampled[i]]
-            print(data)
-            scat.set_offsets(data)
-         else:
-             pass
-            
-         print(f"{i}th pass is somewhat successful")
-         return scat,
-
-    ani = animation.FuncAnimation(fig, animate, repeat=True, frames=40 - 1, interval=50, repeat_delay=2500)
-    
-    # To save the animation using Pillow as a gif
-    writer = animation.PillowWriter(fps=7,
-                                    metadata=dict(artist='metric-space'),
-                                    bitrate=1800)
-    ani.save('scatter.gif', writer=writer)
-    #plt.show()
-
-
-
-if __name__ == "__main__":
-    cli()
-    
-
-    
-
-

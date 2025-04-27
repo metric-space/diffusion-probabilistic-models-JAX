@@ -2,12 +2,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as random
-from jaxtyping import Array, Float, Integer
+from jaxtyping import Array, Float, Integer, PRNGKeyArray
 
 
 def simple_inference(
     diffusion_model: eqx.Module,
-    key: jax.PRNGKeyArray,
+    key: PRNGKeyArray,
     timesteps: int,
     noise_shape: Integer[Array, "..."],
     output_as_perturbation: bool = True,
