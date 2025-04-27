@@ -9,9 +9,6 @@ import os
 import matplotlib.animation as animation
 
 
-# jax typing?
-
-
 #  dataset
 def swissroll(n, key):
     # Swiss roll dataset with zero mean, unit sd
@@ -140,56 +137,7 @@ class RBFNetwork(eqx.Module):
 
 @eqx.filter_value_and_grad
 def compute_loss(model, x, y):
-    mu, sigma = model(x)
+    v_model = jax.vmap(model, in_axes=(None, 0))
+    mu, sigma = v_model(None, x)
 
     return -multivariate_normal_diag(y, x + mu, sigma, log=True).mean()
-
-
-def train(epochs, lr, filename):
-    """Run training."""
-
-    key = jax.random.PRNGKey(0)
-    data = swissroll(1000, key)
-
-    timesteps = 40
-
-    betas = jnp.linspace(1e-4, 0.1, timesteps)
-
-    _, diffusion_data = forward_process(betas, data, key)
-
-    data = diffusion_data
-
-    fig, ax = plt.subplots(nrows=5, ncols=8, figsize=(15, 12))
-
-    for i in range(5):
-        for j in range(8):
-            index = i * 5 + j
-            ax[i, j].scatter(data[index][:, 0], data[index][:, 1])
-    plt.savefig("plot.png")
-
-    # --------------------------------------------
-
-    learning_rate = 0.007
-
-    # -------------------------------------------
-
-    data = jnp.permute_dims(data, (1, 0, 2))  # B, T, 2
-
-    optimizer = optax.adam(learning_rate)
-
-    key, key_model, key_sample = jax.random.split(key, 3)
-
-    model = RBFNetwork(key=key_model)
-
-    opt_state = optimizer.init(model)
-
-    for i in range(epochs):
-        y, x = data[:, :-1, :], data[:, 1:, :]
-
-        loss, grads = compute_loss(model, x, y)
-        updates, opt_state = optimizer.update(grads, opt_state)
-        model = eqx.apply_updates(model, updates)
-
-        print(loss.item())
-
-    save_model(filename, model)

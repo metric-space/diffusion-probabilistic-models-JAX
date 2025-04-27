@@ -38,5 +38,6 @@ def generate_denoising_animation(gif_filename, trajectory, figsize=(4,4), fps=7,
     ani.save(gif_filename, writer=writer)
 
 
-def infinite_dataloader(dataloader):
-    yield from dataloader
+def infinite_trainloader(trainloader):
+    while True:
+        yield from trainloader
