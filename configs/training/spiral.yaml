@@ -1,5 +1,6 @@
 epochs: 10000
 data_count: 1000
 learning_rate: 0.007
+trajectory_length: 40
 
 model_save_name: "spiral_new.ex"

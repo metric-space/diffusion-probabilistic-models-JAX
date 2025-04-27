@@ -7,15 +7,28 @@
 
 ## What is this? 
 
-A port of the paper in JAX (originally written in Theano)
+A port of the paper in JAX & Equinox (originally written in Theano).
+
+**Why Jax you ask?** It has a very Haskell feel to it and among other things, things like `vmap` makes the batch dimension the framework's problem
+
+**Why Equinox you ask?** Uber cool and convenient. Please be sure to check it out here [https://docs.kidger.site/equinox/](https://docs.kidger.site/equinox/) 
+
 
 ## Commands
 
 ```bash
 
-time python diffusion.py train --epochs 10000
+# for inferencing
 
-time python diffusion.py inference --checkpoint ./models/spiral.epx
+time python scripts/inferencing sohl
+
+time python scripts/inferencing spiral
+
+# for training
+
+time python scripts/training sohl
+
+time python scripts/training spiral
 
 ```
 
@@ -43,6 +56,4 @@ The ONLY working implementation (in the spirit of the original paper) was here: 
 
 All credits goes too [Henry Bigelow](https://github.com/hrbigelow) whose github moniker is @hrbigleow
 
-I've included a Jax translation of what he did
-
-Training a MLP to reverse the noising has been ultra ultra hard
+I've included a Jax & Equinox translation of what he did

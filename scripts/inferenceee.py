@@ -4,6 +4,7 @@ import jaxtyping
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import equinox as eqx
+import yaml
 
 from sohl2015.image import Diffusion
 from sohl2015.spiral import RBFNetwork
@@ -19,60 +20,60 @@ def cli():
 
 @cli.command()
 @click.option("--seed", default=1900, help="seed.")
+@click.option("--samples", default=10, help="number of images to draw")
+@click.option(
+    "--config",
+    default="./configs/training/mnist.yaml",
+    help="Filename to save model checkpoint",
+)
 @click.option(
     "--filename",
     default="./models/mnist_better_hyparameters.ex",
     help="Filename to save model checkpoint",
 )
-def sohl(seed, filename):
+def sohl(seed, samples, config, filename):
 
     key = jax.random.PRNGKey(seed)
 
-    passon_key, model_key = jax.random.split(key, 3)
+    model_key, sampling_key = jax.random.split(key, 2)
 
-    n_hidden_dense_lower_output = 5
-    n_hidden_dense_lower = 1000
-    n_hidden_dense_upper = 100
-    n_hidden_conv = 100
-    n_layers_conv = 6
-    n_layers_dense_lower = 6
-    n_layers_dense_upper = 4
+    with open(config, 'r') as file:
+        config = yaml.safe_load(file)
 
-    spatial_width = 28
-    n_temporal_basis = 20
-
-    trajectory_length = 700
-
+    spatial_width = config['spatial_width']
+    n_colours=config['n_colours']
+    trajectory_length = config['trajectory_length']
+    
     model = Diffusion(
-        model_key,
-        n_temporal_basis=n_temporal_basis,
+        model_key ,
+        n_temporal_basis=config['n_temporal_basis'],
         spatial_width=spatial_width,
-        n_hidden_dense_lower_output=n_hidden_dense_lower_output,
-        n_hidden_dense_lower=n_hidden_dense_lower,
-        n_hidden_dense_upper=n_hidden_dense_upper,
-        n_layers_conv=n_layers_conv,
-        n_layers_dense_lower=n_layers_dense_lower,
-        n_layers_dense_upper=n_layers_dense_upper,
-        n_colours=1,
-        n_hidden_conv=n_hidden_conv,
-        trajectory_length=trajectory_length,
+        n_hidden_dense_lower_output=config['n_hidden_dense_lower_output'],
+        n_hidden_dense_lower=config['n_hidden_dense_lower'],
+        n_hidden_dense_upper=config['n_hidden_dense_upper'],
+        n_layers_conv=config['n_layers_conv'],
+        n_layers_dense_lower=config['n_layers_dense_lower'],
+        n_layers_dense_upper=config['n_layers_dense_upper'],
+        n_colours=n_colours,
+        n_hidden_conv=config['n_hidden_conv'],
+        trajectory_length = trajectory_length 
     )
 
     model = load_model(model, filename, key=model_key)
 
-    samples = 10  # TODO: come back to figure out how to pass this in
+    samples = samples  # TODO: come back to figure out how to pass this in
     sampled = simple_inference(
         model,
         sampling_key,
         trajectory_length,
-        (samples, 2),
-        output_as_perturbation=True,
+        (samples, n_colours, spatial_width, spatial_width),
+        output_as_perturbation=False,
     )
 
     fix, ax = plt.subplots(figsize=(15, 15))
     im = ax.imshow(sampled[-1, 0].transpose(1, 2, 0))
     ax.axis("off")
-    plt.savefig("denoised_spiral.png")
+    plt.savefig("/tmp/denoised_spiral.png")
 
     print(sampled.shape)
 
@@ -85,11 +86,16 @@ def sohl(seed, filename):
 @cli.command()
 @click.option("--seed", default=1900, help="seed.")
 @click.option(
+    "--config",
+    default="./configs/training/spiral.yaml",
+    help="Parameter config",
+)
+@click.option(
     "--filename",
     default="./models/spiral.epx",
     help="Filename to save model checkpoint",
 )
-def spiral(seed, filename):
+def spiral(seed, config, filename):
 
     key = jax.random.PRNGKey(seed)
 
@@ -101,7 +107,10 @@ def spiral(seed, filename):
 
     # ---------------------------------------------------------------------------
 
-    trajectory_length = 40
+    with open(config, 'r') as file:
+        config = yaml.safe_load(file)
+
+    trajectory_length = config['trajectory_length']
 
     samples = 1000  # TODO: come back to figure out how to pass this in
     sampled = simple_inference(
@@ -114,7 +123,7 @@ def spiral(seed, filename):
 
     scat = ax.scatter(sampled[-1, :, 0], sampled[-1, :, 1])
 
-    plt.savefig("./denoised_spiral.png")
+    plt.savefig("/tmp/denoised_spiral.png")
 
     fig, ax = plt.subplots(figsize=(4, 4))
     ax.set_xlim([-2, 2])
@@ -143,7 +152,7 @@ def spiral(seed, filename):
         fps=7, metadata=dict(artist="metric-space"), bitrate=1800
     )
 
-    ani.save("scatter.gif", writer=writer)
+    ani.save("/tmp/scatter.gif", writer=writer)
 
     return
 

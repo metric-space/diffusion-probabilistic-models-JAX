@@ -9,9 +9,9 @@ n_layers_dense_lower: 6
 n_layers_dense_upper: 4
 
 spatial_width: 28
-n_temporal_basis: 12
+n_temporal_basis: 20
 
-trajectory_length: 500
+trajectory_length: 700
 n_colours: 1
 
 learning_rate:  0.001
