@@ -1,4 +1,4 @@
-
+<h1 align='center'> Deep Unsupervised Learning using Nonequilibrium Thermodynamics (using JAX and Equinox)</h1>
 
 ![Spiral dataset](./resources/scatter.gif)
 
