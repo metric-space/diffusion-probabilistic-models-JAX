@@ -7,7 +7,7 @@
 
 ## What is this? 
 
-A JAX & Equinox port of the paper [Deep Unsupervised Learning using Nonequilibrium Thermodynamics](https://arxiv.org/abs/1503.03585)'s [code](https://github.com/Sohl-Dickstein/Diffusion-Probabilistic-Models) (originally written in Theano). In addition while the paper talks about **spiral datset diffusion** it is not present in the official code but a working working is present here: https://github.com/hrbigelow/simple-diffusion and a Jax+Equinox port of said code in present here as well.
+A JAX & Equinox port of the paper [Deep Unsupervised Learning using Nonequilibrium Thermodynamics](https://arxiv.org/abs/1503.03585)'s [code](https://github.com/Sohl-Dickstein/Diffusion-Probabilistic-Models) (originally written in Theano). In addition while the paper talks about **spiral datset diffusion** it is not present in the official code but a working working is present here: https://github.com/hrbigelow/simple-diffusion  and I have implemented a Jax+Equinox port of said code alongside the jax_equinox port of the original theano code thereby trying to make somewhat of a complete code reference
 
 **Why Jax you ask?** It has a very Haskell feel to it and among other things, things like `vmap` makes the batch dimension the framework's problem
 
@@ -17,7 +17,8 @@ A JAX & Equinox port of the paper [Deep Unsupervised Learning using Nonequilibri
 ## Crucial differences
 
 1. As opposed to the original implementation, the schedule is not learnt. Learning the schedule is a training nightmare. This implementation has a linear schedule patched in.
-2. Other differences are mentioned in the file `porting_notes.md` (present in this repo)
+2. Inpainting mask not put in yet
+3. Other differences are mentioned in the file `porting_notes.md` (present in this repo)
 
 
 ## Commands
