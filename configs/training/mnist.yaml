@@ -9,13 +9,13 @@ n_layers_dense_lower: 6
 n_layers_dense_upper: 4
 
 spatial_width: 28
-n_temporal_basis: 20
+n_temporal_basis: 15
 
-trajectory_length: 700
+trajectory_length: 1000
 n_colours: 1
 
 learning_rate:  0.001
-batch_size: 200
-steps: 2
+batch_size: 250
+steps: 10000
 
 model_save_name: "mnist_better_hyparameters.ex"

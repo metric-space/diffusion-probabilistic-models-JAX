@@ -357,3 +357,58 @@ class Diffusion(eqx.Module):
         )
 
         return mu, sigma
+
+def neg_loglikelihood(
+    mu,
+    sigma,
+    mu_posterior,
+    sigma_posterior,
+    trajectory_length,
+    covariance_schedule,
+    n_colours=1,
+):
+
+    # Why the convoluted route? Because the normal route is numerically unstable
+    alpha_arr = 1.0 - covariance_schedule
+    cumulative_covariance = (1.0 - jnp.exp(jnp.log(alpha_arr).sum()))
+
+    KL = (
+        jnp.log(sigma)
+        - jnp.log(sigma_posterior)
+        + ((sigma_posterior**2 + (mu_posterior - mu) ** 2) / (2 * sigma**2))
+        - 0.5
+    )
+
+    COMMON = 0.5 * (1 + jnp.log(2 * jnp.pi))
+
+    H_startpoint = COMMON + 0.5 * jnp.log(covariance_schedule[0])
+    H_endpoint = COMMON + 0.5 * jnp.log(cumulative_covariance)
+    H_prior = COMMON
+
+    negL_bound = KL * trajectory_length + H_startpoint - H_endpoint + H_prior
+
+    negL_gauss = COMMON
+
+    negL_diff = negL_bound - negL_gauss
+
+    L_diff_bits = negL_diff / jnp.log(2.0)
+
+    L_diff_bits_avg = L_diff_bits.mean() * n_colours
+
+    return L_diff_bits_avg
+
+
+@eqx.filter_value_and_grad
+def compute_loss(model_, key, t, images, noise_amp):
+    keys = jax.random.split(key, images.shape[0])
+
+    v_forward_diffusion = jax.vmap(model_.forward_diffusion, in_axes=(0,None,0,None))
+    v_reverse_diffusion = jax.vmap(model_, in_axes=(None,0))
+
+    image, mu, sigma = v_forward_diffusion(keys, t, images, noise_amp)
+    r_mu, r_sigma = v_reverse_diffusion(t, image)
+    loss =  neg_loglikelihood(r_mu, r_sigma, mu, sigma, model_.trajectory_length , model_.beta_arr, 1)
+
+    return loss
+
+

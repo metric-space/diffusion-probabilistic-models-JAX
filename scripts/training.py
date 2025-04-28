@@ -100,9 +100,9 @@ def sohl(seed, config):
         updates, opt_state = optimizer.update(grads, opt_state, eqx.filter(model, eqx.is_inexact_array))
         model = eqx.apply_updates(model, updates)
 
-        print(f"loss for t={t} is {loss.item()}")
+        print(f"loss for t={t} is {loss.item()} at {step}")
 
-    save_model(config.model_save_name, model)
+    save_model(config["model_save_name"], model)
 
 
 @cli.command()

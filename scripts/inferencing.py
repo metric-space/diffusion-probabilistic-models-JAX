@@ -77,8 +77,8 @@ def sohl(seed, samples, config, filename):
 
     print(sampled.shape)
 
-    # for i in range(samples):
-    generate_denoising_animation(f"/tmp/new_denoised_spiral.gif", sampled[:, 0], fps=60)
+    for i in range(samples):
+        generate_denoising_animation(f"./samples/new_denoised_spiral_{i}.gif", sampled[:, i], fps=60)
 
     return
 
