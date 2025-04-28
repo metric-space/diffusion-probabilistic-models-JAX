@@ -1,9 +1,10 @@
 <h1 align='center'> Deep Unsupervised Learning using Nonequilibrium Thermodynamics (using JAX and Equinox)</h1>
 
-![Spiral dataset](./resources/scatter.gif)
-
-![MNIST dataset](./resources/mnist_cifar.gif)
-
+<p float="left">
+  <img src="./resources/polished_mnist.gif" width="30%" />
+  <img src="./resources/scatter.gif" width="30%" />
+  <img src="./resources/polished_cifar.gif" width="30%" />
+</p>
 
 ## What is this? 
 
@@ -61,7 +62,7 @@ but the loss function prescribed there wasn't getting the structure restoration 
 
 The ONLY working implementation for the **spiral dataset diffusion** (somewhat in the spirit of the original paper) was here: https://github.com/hrbigelow/simple-diffusion
 
-The credits for  goes too [Henry Bigelow](https://github.com/hrbigelow) whose github moniker is @hrbigleow
+The credits for the spiral dataset diffusion goes to [Henry Bigelow](https://github.com/hrbigelow) whose github moniker is @hrbigleow
 
 I've included a Jax & Equinox translation of what he did
 
