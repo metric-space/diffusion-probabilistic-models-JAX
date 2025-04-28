@@ -14,7 +14,8 @@ dependencies = [
   "jaxtyping",
   "optax",
   "orbax",
-  "pyyaml"
+  "pyyaml",
+  "torchvision"
 ]
 requires-python = ">=3.9"
 
