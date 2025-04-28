@@ -63,9 +63,13 @@ def sohl(seed, config):
         trajectory_length = config['trajectory_length'] 
     )
 
-    transform = transforms.Compose([ transforms.ToTensor(), transforms.Normalize(mean = 0.1307, std = 0.3081)])
-
-    train_dataset = torchvision.datasets.MNIST("MNIST", train=True, download=True, transform=transform)
+    if config["dataset"] == "cifar":
+        transform = transforms.Compose([ transforms.ToTensor(), transforms.Normalize(mean = [0.4914, 0.4822, 0.4465], std = [0.2470, 0.2435, 0.2616])])
+        train_dataset = torchvision.datasets.CIFAR10("CIFAR", train=True, download=True, transform=transform)
+    else:
+        transform = transforms.Compose([ transforms.ToTensor(), transforms.Normalize(mean = 0.1307, std = 0.3081)])
+        train_dataset = torchvision.datasets.MNIST("MNIST", train=True, download=True, transform=transform)
+    
     trainloader = torch.utils.data.DataLoader( train_dataset, batch_size=config['batch_size'], shuffle=True, drop_last=True)
 
     original_noise_level = 1.0 / 255.  # one pixel intensity step in [0,1] scale

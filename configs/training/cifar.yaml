@@ -19,3 +19,5 @@ batch_size: 250
 steps: 15000
 
 model_save_name: "cifar_better_hyparameters.ex"
+
+dataset: "cifar"

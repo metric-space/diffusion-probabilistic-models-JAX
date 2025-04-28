@@ -61,6 +61,7 @@ class MultiLayerConvolution(eqx.Module):
         self.layers = eqx.nn.Sequential(layers)
 
     def __call__(self, x):
+        print(x.shape)
         return self.layers(x)
 
 
@@ -123,7 +124,7 @@ class MLPConvDense(eqx.Module):
 
         input_ = n_colours * spatial_width**2
         output_ = n_hidden_dense_lower_output * spatial_width**2
-        print(f"output is {output_}")
+
         self.mlp_dense_lower = eqx.nn.MLP(
             key=key_lower,
             activation=LeakyRelu,
@@ -155,7 +156,7 @@ class MLPConvDense(eqx.Module):
 
         X = x.reshape((self.colours * self.spatial_width**2))
         Y_dense = self.mlp_dense_lower(X)
-        Y_dense = Y_dense.reshape((self.spatial_width, self.spatial_width, 5))
+        Y_dense = Y_dense.reshape((self.spatial_width, self.spatial_width, self.n_hidden_dense_lower_output))
 
         Z = jnp.concat(
             [
@@ -401,14 +402,13 @@ def neg_loglikelihood(
 @eqx.filter_value_and_grad
 def compute_loss(model_, key, t, images, noise_amp):
     keys = jax.random.split(key, images.shape[0])
+    n_colours = images.shape[1]
 
     v_forward_diffusion = jax.vmap(model_.forward_diffusion, in_axes=(0,None,0,None))
     v_reverse_diffusion = jax.vmap(model_, in_axes=(None,0))
 
     image, mu, sigma = v_forward_diffusion(keys, t, images, noise_amp)
     r_mu, r_sigma = v_reverse_diffusion(t, image)
-    loss =  neg_loglikelihood(r_mu, r_sigma, mu, sigma, model_.trajectory_length , model_.beta_arr, 1)
+    loss =  neg_loglikelihood(r_mu, r_sigma, mu, sigma, model_.trajectory_length , model_.beta_arr, n_colours)
 
     return loss
-
-

@@ -15,15 +15,21 @@ def load_model(model, filename, key):
         return eqx.tree_deserialise_leaves(f, model)
 
 
-def generate_denoising_animation(gif_filename, trajectory, figsize=(4,4), fps=7, repeat_delay=2500, type="image"):
+def correct_image(img):
+    img_min = img.min()
+    img_max = img.max()
+    return (img - img_min) / (img_max - img_min + 1e-8)
+
+
+def generate_denoising_animation(gif_filename, trajectory, figsize=(4,4), fps=7, repeat_delay=2500):
     fig, ax = plt.subplots(figsize=(4, 4))
 
-    im = ax.imshow(trajectory[0].transpose(1, 2, 0))  # Convert (C, H, W) → (H, W, C)
+    im = ax.imshow(correct_image(trajectory[0].transpose(1, 2, 0)))  # Convert (C, H, W) → (H, W, C)
     ax.axis('off')
     
     # Animation function
     def animate(i):
-        im.set_data(trajectory[i].transpose(1, 2, 0))
+        im.set_data(correct_image(trajectory[i].transpose(1, 2, 0)))
         return im,
 
     timesteps = trajectory.shape[0]

@@ -8,7 +8,7 @@ import yaml
 
 from sohl2015.image import Diffusion
 from sohl2015.spiral import RBFNetwork
-from utils import load_model, generate_denoising_animation
+from utils import load_model, generate_denoising_animation, correct_image
 from inference import simple_inference
 
 
@@ -24,14 +24,9 @@ def cli():
 @click.option(
     "--config",
     default="./configs/training/mnist.yaml",
-    help="Filename to save model checkpoint",
+    help="Config Filename",
 )
-@click.option(
-    "--filename",
-    default="./models/mnist_better_hyparameters.ex",
-    help="Filename to save model checkpoint",
-)
-def sohl(seed, samples, config, filename):
+def sohl(seed, samples, config):
 
     key = jax.random.PRNGKey(seed)
 
@@ -59,7 +54,7 @@ def sohl(seed, samples, config, filename):
         trajectory_length = trajectory_length 
     )
 
-    model = load_model(model, filename, key=model_key)
+    model = load_model(model, f"./models/{config['model_save_name']}", key=model_key)
 
     samples = samples  # TODO: come back to figure out how to pass this in
     sampled = simple_inference(
@@ -70,15 +65,15 @@ def sohl(seed, samples, config, filename):
         output_as_perturbation=False,
     )
 
-    fix, ax = plt.subplots(figsize=(15, 15))
-    im = ax.imshow(sampled[-1, 0].transpose(1, 2, 0))
-    ax.axis("off")
-    plt.savefig("/tmp/denoised_spiral.png")
-
-    print(sampled.shape)
-
+    
     for i in range(samples):
-        generate_denoising_animation(f"./samples/new_denoised_spiral_{i}.gif", sampled[:, i], fps=60)
+
+        fix, ax = plt.subplots(figsize=(15, 15))
+        im = ax.imshow(correct_image(sampled[-1, i].transpose(1, 2, 0)))
+        ax.axis("off")
+        plt.savefig(f"/tmp/denoised_cifar_{i}.png")
+
+        generate_denoising_animation(f"./samples/new_denoised_cifar_{i}.gif", sampled[:, i], fps=60)
 
     return
 

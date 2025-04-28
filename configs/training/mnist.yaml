@@ -19,3 +19,5 @@ batch_size: 250
 steps: 10000
 
 model_save_name: "mnist_better_hyparameters.ex"
+
+dataset: "mnist"
