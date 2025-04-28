@@ -1,0 +1,21 @@
+seed: 2134
+
+n_hidden_dense_lower_output: 5
+n_hidden_dense_lower: 1000
+n_hidden_dense_upper: 100
+n_hidden_conv: 100
+n_layers_conv: 6
+n_layers_dense_lower: 6
+n_layers_dense_upper: 4
+
+spatial_width: 32
+n_temporal_basis: 15
+
+trajectory_length: 1000
+n_colours: 3
+
+learning_rate:  0.001
+batch_size: 250
+steps: 15000
+
+model_save_name: "cifar_better_hyparameters.ex"
